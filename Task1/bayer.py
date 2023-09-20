@@ -76,8 +76,58 @@ def get_bayer_mask(n_rows: int, n_cols: int):
     green_mask = __make_one_channel_mask(1, n_rows, n_cols)
     blue_mask = __make_one_channel_mask(2, n_rows, n_cols)
 
-    print(blue_mask)
+    # print(red_mask)
 
     mask = np.stack([red_mask, green_mask,blue_mask], axis = 0).reshape((n_rows,n_cols,3))
 
     return mask
+
+def __apply_mask(raw_img:np.ndarray, mask:np.ndarray):
+    res = raw_img.copy()
+    res[~mask] = 0
+    return res
+
+
+def get_colored_img(raw_img: np.ndarray):
+
+    n_rows = raw_img.shape[0]
+    n_cols = raw_img.shape[1]
+    mask = get_bayer_mask(n_rows, n_cols).reshape(3, n_rows, n_cols)
+
+    red_channel = __apply_mask(raw_img, mask[0])#[None,...]
+    # print(red_channel)
+    green_channel = __apply_mask(raw_img, mask[1])#[None,...]
+    # print(green_channel)
+    blue_channel = __apply_mask(raw_img, mask[2])#[None,...]
+    # print(blue_channel)
+    return np.stack([red_channel, green_channel, blue_channel], axis=0) #.reshape(n_rows, n_cols, -1)
+
+
+def __bilinear_channel_interpolation(channel_values: np.ndarray, mask: np.ndarray):
+
+    empty_idx = np.argwhere(~mask)
+    channel_values[~mask] = None
+    slice = None
+    for (i,j), value in np.ndenumerate(empty_idx):
+        next_slice = channel_values[i-1:i+1,j-1,j+1] 
+        if slice is None:
+            slice = next_slice
+        else:
+            slice = np.stack([slice,next_slice])
+    # хз
+
+    for idx in empty_idx:
+        slice = 
+
+
+    pass
+
+def bilinear_interpolation(colored_img: np.ndarray):
+
+
+
+
+    return None
+
+
+
