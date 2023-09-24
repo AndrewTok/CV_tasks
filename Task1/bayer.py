@@ -1,5 +1,5 @@
 import numpy as np
-
+from skimage import img_as_ubyte
 
 def __get_mask_line_with_start_pixel(start_pixel: bool):
     seq = np.zeros(2, dtype=bool)
@@ -105,29 +105,59 @@ def get_colored_img(raw_img: np.ndarray):
 
 def __bilinear_channel_interpolation(channel_values: np.ndarray, mask: np.ndarray):
 
-    empty_idx = np.argwhere(~mask)
-    channel_values[~mask] = None
-    slice = None
-    for (i,j), value in np.ndenumerate(empty_idx):
-        next_slice = channel_values[i-1:i+1,j-1,j+1] 
-        if slice is None:
-            slice = next_slice
-        else:
-            slice = np.stack([slice,next_slice])
-    # хз
 
-    for idx in empty_idx:
-        slice = 
+    result = np.copy(channel_values)
+    channel_values[~mask] = 1
+    n_rows = channel_values.shape[0]
+    n_cols = channel_values.shape[1]
+    for i in range(n_rows):
+        for j in range(n_cols):
+            if not mask[i,j]:
+                mean = np.nanmean(channel_values[i-1:i+1,j-1:j+1])
+                result[i,j] = mean
+
+    return result
+
+    # empty_idx = np.argwhere(~mask)
+    # channel_values[~mask] = None
+    # slice = None
+    # for (i,j), value in np.ndenumerate(empty_idx):
+    #     next_slice = channel_values[i-1:i+1,j-1,j+1] 
+    #     if slice is None:
+    #         slice = next_slice
+    #     else:
+    #         slice = np.stack([slice,next_slice])
+    # # хз
+
+    # for idx in empty_idx:
+    #     slice = 
 
 
     pass
 
 def bilinear_interpolation(colored_img: np.ndarray):
 
+    n_rows = colored_img.shape[0]
+    n_cols = colored_img.shape[1]
+
+    mask = get_bayer_mask(n_rows, n_cols).reshape(3, n_rows, n_cols)
+
+
+    red_interpolated = __bilinear_channel_interpolation(colored_img[0], mask[0])
+    green_interpolated = __bilinear_channel_interpolation(colored_img[1], mask[1])
+    blue_interpolated = __bilinear_channel_interpolation(colored_img[2], mask[2])
+
+    return np.stack([red_interpolated, green_interpolated,blue_interpolated])
 
 
 
-    return None
+
+raw_img = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype='uint8')
+colored_img = get_colored_img(raw_img)
+img = img_as_ubyte(bilinear_interpolation(colored_img))
+print(img[0])
+# print()
+assert (img[1, 1] == [5, 5, 5]).all()
 
 
 
