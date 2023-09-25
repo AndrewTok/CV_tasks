@@ -39,7 +39,7 @@ def __make_one_channel_mask(channel: int, n_rows: int, n_cols: int):
     # ranges = { 0: np.arange(0, n_cols-1), 1: np.arange(n_cols), 2: np.arange(1, n_cols) } # to global space?
     
 
-    repeating_num = (n_cols + 1) // 2
+    repeating_num = (n_rows + 1) // 2
     
     if channel == 0:
         start_pixel = False
@@ -54,8 +54,8 @@ def __make_one_channel_mask(channel: int, n_rows: int, n_cols: int):
         is_second_line_empty = False
         is_first_line_empty = True
 
-    pair_lines = __get_pair_templated_lines(n_rows, start_pixel, is_second_line_empty, is_first_line_empty).reshape(-1)
-    mask = np.tile(pair_lines, repeating_num).reshape(-1, n_cols)[:n_rows,:n_cols]
+    pair_lines = __get_pair_templated_lines(n_cols, start_pixel, is_second_line_empty, is_first_line_empty).reshape(-1)
+    mask = np.tile(pair_lines, repeating_num).reshape(repeating_num*2, -1)[:n_rows,:n_cols]
     return mask
 
 
@@ -71,7 +71,12 @@ def get_bayer_masks(n_rows: int, n_cols: int):
     green_mask = __make_one_channel_mask(1, n_rows, n_cols)
     blue_mask = __make_one_channel_mask(2, n_rows, n_cols)
 
-    return np.dstack([red_mask, green_mask, blue_mask])
+    masks = np.zeros((n_rows, n_cols, 3), 'bool')
+    masks[..., 0] = red_mask
+    masks[..., 1] = green_mask
+    masks[..., 2] = blue_mask
+
+    return masks #np.dstack([red_mask, green_mask, blue_mask])
 
 def __apply_mask(raw_img:np.ndarray, mask:np.ndarray):
     res = raw_img.copy()
@@ -96,7 +101,7 @@ def get_colored_img(raw_img: np.ndarray):
 
 def __bilinear_channel_interpolation(channel_values: np.ndarray, mask: np.ndarray):
     float_channel_values = channel_values.astype(dtype = 'float')
-    float_channel_values[~mask] = np.NAN
+    float_channel_values[~mask] = np.NaN
     result = np.copy(channel_values)
     n_rows = channel_values.shape[0]
     n_cols = channel_values.shape[1]
@@ -104,9 +109,9 @@ def __bilinear_channel_interpolation(channel_values: np.ndarray, mask: np.ndarra
         for j in range(n_cols):
             if not mask[i,j]:
                 img_slice = float_channel_values[i-1 : i+2, j-1 : j+2]
-                if img_slice.any():
-                    mean = np.nanmean(img_slice)
-                    result[i,j] = 0 if np.isnan else int(mean)
+                mean = np.nanmean(img_slice)
+                result[i,j] = 0 if np.isnan(mean) else int(mean)
+                # if img_slice.any():
 
     return result
 
@@ -127,19 +132,48 @@ def __bilinear_channel_interpolation(channel_values: np.ndarray, mask: np.ndarra
 
     pass
 
-def bilinear_interpolation(colored_img: np.ndarray):
 
+def set_interpolated_pixel_value(result: np.ndarray, masks: np.ndarray, slices: np.ndarray, i: int, j: int, channel: int):
+    # img_slice = float_channel_values[i-1 : i+2, j-1 : j+2]
+    mean = np.nanmean(slices[..., channel])
+    if not masks[i,j,channel]:
+        result[i,j, channel] = 0 if np.isnan(mean) else int(mean)
+    
+
+def bilinear_interpolation_faster(colored_img: np.ndarray):
     n_rows = colored_img.shape[0]
     n_cols = colored_img.shape[1]
 
+    float_channel_values = colored_img.astype(dtype = 'float')
+    result = np.copy(colored_img)
+
     mask = get_bayer_masks(n_rows, n_cols)#.reshape(3, n_rows, n_cols)
+    float_channel_values[~mask] = np.NaN
+
+    for i in range(n_rows):
+        for j in range(n_cols):
+            img_slice = float_channel_values[i-1 : i+2, j-1 : j+2]
+            set_interpolated_pixel_value(result, mask, img_slice, i, j, 0)
+            set_interpolated_pixel_value(result, mask, img_slice, i, j, 1)
+            set_interpolated_pixel_value(result, mask, img_slice, i, j, 2)
+    return result
+
+def bilinear_interpolation(colored_img: np.ndarray):
+
+    return bilinear_interpolation_faster(colored_img)
+    # n_rows = colored_img.shape[0]
+    # n_cols = colored_img.shape[1]
+
+    # mask = get_bayer_masks(n_rows, n_cols)#.reshape(3, n_rows, n_cols)
 
 
-    red_interpolated = __bilinear_channel_interpolation(colored_img[..., 0], mask[..., 0])
-    green_interpolated = __bilinear_channel_interpolation(colored_img[..., 1], mask[..., 1])
-    blue_interpolated = __bilinear_channel_interpolation(colored_img[..., 2], mask[..., 2])
 
-    return np.dstack([red_interpolated, green_interpolated, blue_interpolated]).astype('uint8')
+
+    # red_interpolated = __bilinear_channel_interpolation(colored_img[..., 0], mask[..., 0])
+    # green_interpolated = __bilinear_channel_interpolation(colored_img[..., 1], mask[..., 1])
+    # blue_interpolated = __bilinear_channel_interpolation(colored_img[..., 2], mask[..., 2])
+
+    # return np.dstack([red_interpolated, green_interpolated, blue_interpolated])#.astype('uint8')
 
 
 # masks = get_bayer_masks(2, 2)
