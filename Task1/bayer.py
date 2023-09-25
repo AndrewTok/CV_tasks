@@ -95,17 +95,18 @@ def get_colored_img(raw_img: np.ndarray):
 
 
 def __bilinear_channel_interpolation(channel_values: np.ndarray, mask: np.ndarray):
-
-
+    float_channel_values = channel_values.astype(dtype = 'float')
+    float_channel_values[~mask] = np.NAN
     result = np.copy(channel_values)
-    channel_values[~mask] = 1
     n_rows = channel_values.shape[0]
     n_cols = channel_values.shape[1]
     for i in range(n_rows):
         for j in range(n_cols):
             if not mask[i,j]:
-                mean = np.nanmean(channel_values[i-1:i+1,j-1:j+1])
-                result[i,j] = mean
+                img_slice = float_channel_values[i-1 : i+2, j-1 : j+2]
+                if img_slice.any():
+                    mean = np.nanmean(img_slice)
+                    result[i,j] = 0 if np.isnan else int(mean)
 
     return result
 
@@ -131,14 +132,14 @@ def bilinear_interpolation(colored_img: np.ndarray):
     n_rows = colored_img.shape[0]
     n_cols = colored_img.shape[1]
 
-    mask = get_bayer_masks(n_rows, n_cols).reshape(3, n_rows, n_cols)
+    mask = get_bayer_masks(n_rows, n_cols)#.reshape(3, n_rows, n_cols)
 
 
-    red_interpolated = __bilinear_channel_interpolation(colored_img[0], mask[0])
-    green_interpolated = __bilinear_channel_interpolation(colored_img[1], mask[1])
-    blue_interpolated = __bilinear_channel_interpolation(colored_img[2], mask[2])
+    red_interpolated = __bilinear_channel_interpolation(colored_img[..., 0], mask[..., 0])
+    green_interpolated = __bilinear_channel_interpolation(colored_img[..., 1], mask[..., 1])
+    blue_interpolated = __bilinear_channel_interpolation(colored_img[..., 2], mask[..., 2])
 
-    return np.stack([red_interpolated, green_interpolated,blue_interpolated])
+    return np.dstack([red_interpolated, green_interpolated, blue_interpolated]).astype('uint8')
 
 
 # masks = get_bayer_masks(2, 2)
@@ -152,5 +153,7 @@ def bilinear_interpolation(colored_img: np.ndarray):
 
 # print(get_bayer_masks(3,3)[...,0])
 
-
+# test_channel = np.array([[0, 5, 0],[0, 0, 0], [1, 0, 1]])
+# test_mask = np.array([[False, True, False],[False, False, False],[True, False, True]])
+# print(__bilinear_channel_interpolation(test_channel, test_mask))
 
