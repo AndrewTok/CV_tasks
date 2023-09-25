@@ -55,7 +55,7 @@ def __make_one_channel_mask(channel: int, n_rows: int, n_cols: int):
         is_first_line_empty = True
 
     pair_lines = __get_pair_templated_lines(n_rows, start_pixel, is_second_line_empty, is_first_line_empty).reshape(-1)
-    mask = np.tile(pair_lines, repeating_num).reshape(-1, repeating_num*2)[:n_rows,:n_cols]
+    mask = np.tile(pair_lines, repeating_num).reshape(-1, n_cols)[:n_rows,:n_cols]
     return mask
 
 
@@ -76,16 +76,8 @@ def get_bayer_masks(n_rows: int, n_cols: int):
     green_mask = __make_one_channel_mask(1, n_rows, n_cols)
     blue_mask = __make_one_channel_mask(2, n_rows, n_cols)
 
-    # print(red_mask)
-
-    # mask = np.stack([red_mask, blue_mask, green_mask], axis = 0)
-    # print(mask[0])
-    # mask = mask.reshape((n_rows,n_cols,3))
     mask = np.zeros((n_rows, n_cols, 3), 'bool')
-    mask[...,0] = red_mask
-    mask[..., 1] = green_mask
-    mask[..., 2] = blue_mask
-    return mask
+    return np.dstack([red_mask, green_mask, blue_mask])
 
 def __apply_mask(raw_img:np.ndarray, mask:np.ndarray):
     res = raw_img.copy()
@@ -156,13 +148,15 @@ def bilinear_interpolation(colored_img: np.ndarray):
 
 
 # masks = get_bayer_masks(2, 2)
-gt_masks = np.zeros((2, 2, 3), 'bool')
-gt_masks[..., 0] = np.array([[0, 1], [0, 0]])
-gt_masks[..., 1] = np.array([[1, 0], [0, 1]])
-gt_masks[..., 2] = np.array([[0, 0], [1, 0]])
+# gt_masks = np.zeros((2, 2, 3), 'bool')
+# gt_masks[..., 0] = np.array([[0, 1], [0, 0]])
+# gt_masks[..., 1] = np.array([[1, 0], [0, 1]])
+# gt_masks[..., 2] = np.array([[0, 0], [1, 0]])
 # np.assert_ndarray_equal(actual=masks, correct=gt_masks)
 
 # print(gt_masks.reshape((3,2,2))[0])
+
+# print(get_bayer_masks(3,3)[...,0])
 
 
 
