@@ -66,17 +66,11 @@ def __make_one_channel_mask(channel: int, n_rows: int, n_cols: int):
 
 
 def get_bayer_masks(n_rows: int, n_cols: int):
-    
-    # mask = np.zeros((n_rows, n_cols, 3), dtype=bool)
-    
-    # total = np.ndarray
 
-    
     red_mask = __make_one_channel_mask(0, n_rows, n_cols)
     green_mask = __make_one_channel_mask(1, n_rows, n_cols)
     blue_mask = __make_one_channel_mask(2, n_rows, n_cols)
 
-    mask = np.zeros((n_rows, n_cols, 3), 'bool')
     return np.dstack([red_mask, green_mask, blue_mask])
 
 def __apply_mask(raw_img:np.ndarray, mask:np.ndarray):
@@ -89,15 +83,15 @@ def get_colored_img(raw_img: np.ndarray):
 
     n_rows = raw_img.shape[0]
     n_cols = raw_img.shape[1]
-    mask = get_bayer_masks(n_rows, n_cols).reshape(3, n_rows, n_cols)
+    mask = get_bayer_masks(n_rows, n_cols)#.reshape(3, n_rows, n_cols)
 
-    red_channel = __apply_mask(raw_img, mask[0])#[None,...]
+    red_channel = __apply_mask(raw_img, mask[..., 0]) #[None,...]
     # print(red_channel)
-    green_channel = __apply_mask(raw_img, mask[1])#[None,...]
+    green_channel = __apply_mask(raw_img, mask[..., 1])#[None,...]
     # print(green_channel)
-    blue_channel = __apply_mask(raw_img, mask[2])#[None,...]
+    blue_channel = __apply_mask(raw_img, mask[..., 2])#[None,...]
     # print(blue_channel)
-    return np.stack([red_channel, green_channel, blue_channel], axis=0) #.reshape(n_rows, n_cols, -1)
+    return np.dstack([red_channel, green_channel, blue_channel]) #.reshape(n_rows, n_cols, -1)
 
 
 def __bilinear_channel_interpolation(channel_values: np.ndarray, mask: np.ndarray):
