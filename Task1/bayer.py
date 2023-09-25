@@ -138,7 +138,7 @@ def set_interpolated_pixel_value(result: np.ndarray, masks: np.ndarray, slices: 
     mean = np.nanmean(slices[..., channel])
     if not masks[i,j,channel]:
         result[i,j, channel] = 0 if np.isnan(mean) else int(mean)
-    
+
 
 def bilinear_interpolation_faster(colored_img: np.ndarray):
     n_rows = colored_img.shape[0]
@@ -172,8 +172,121 @@ def bilinear_interpolation(colored_img: np.ndarray):
     # red_interpolated = __bilinear_channel_interpolation(colored_img[..., 0], mask[..., 0])
     # green_interpolated = __bilinear_channel_interpolation(colored_img[..., 1], mask[..., 1])
     # blue_interpolated = __bilinear_channel_interpolation(colored_img[..., 2], mask[..., 2])
+# return np.dstack([red_interpolated, green_interpolated, blue_interpolated])#.astype('uint8')
 
-    # return np.dstack([red_interpolated, green_interpolated, blue_interpolated])#.astype('uint8')
+G_at_R_coefs = np.array([[0,0,-1,0,0],
+                        [0,0,0,0,0],
+                        [-1,0,4,0,-1],
+                        [0,0,0,0,0],
+                        [0,0,-1,0,0]])
+
+G_at_B_coefs = G_at_R_coefs
+
+R_at_G_in_RB_coefs = np.array([[0,0,1/2,0,0],
+                        [0,-1,0,-1,0],
+                        [-1,0,5,0,-1],
+                        [0,-1,0,-1,0],
+                        [0,0,1/2,0,0]])
+
+R_at_G_in_BR_coefs = np.array([[0,0,-1,0,0],
+                        [0,-1,0,-1,0],
+                        [1/2,0,5,0,1/2],
+                        [0,-1,0,-1,0],
+                        [0,0,-1,0,0]])
+
+R_at_B_coefs = np.array([[0,0,-3/2,0,0],
+                        [0,0,0,0,0],
+                        [-3/2,0,6,0,-3/2],
+                        [0,0,0,0,0],
+                        [0,0,-3/2,0,0]])
+
+B_at_G_in_BR_coefs = R_at_G_in_RB_coefs
+
+B_at_G_in_RB_coefs = R_at_G_in_BR_coefs
+
+B_at_R_coefs = R_at_B_coefs
+
+def choose_coefs(i, j, masks, channel):
+    #return coefs matrix, total weight, channel to apply coefs
+    if channel == 1:
+        if masks[i,j,0]:
+            return G_at_R_coefs, 4, 0
+        return G_at_B_coefs, 4, 2
+    if channel == 0:
+        if masks[i,j+1,channel] or masks[i,j-1,channel]:
+            return R_at_G_in_RB_coefs, 6, 1
+        if masks[i+1,j,channel] or masks[i-1,j,channel]:
+            return R_at_G_in_BR_coefs, 6, 1 
+        else:
+            return R_at_B_coefs, 6, 2
+        
+    if channel == 2:
+        if masks[i,j+1,channel] or masks[i,j-1,channel]:
+            return B_at_G_in_BR_coefs, 6, 1
+        if masks[i+1,j,channel] or masks[i-1,j,channel]:
+            return B_at_G_in_RB_coefs, 6, 1
+        else:
+            return B_at_R_coefs, 6, 0
+    return None
+
+
+
+
+def set_improved_interpolated_pixel_value(result: np.ndarray, masks: np.ndarray, slices: np.ndarray, i: int, j: int, channel: int):
+    # img_slice = float_channel_values[i-1 : i+2, j-1 : j+2]
+    small_slices = slices[1:4,1:4,:]
+    mean = np.nanmean(small_slices[..., channel])
+
+    if not masks[i,j,channel] and slices.any():
+        bilinear_val = 0 if np.isnan(mean) else mean
+        coefs, weight, coefs_channel = choose_coefs(i,j,masks, channel)
+        # print(coefs.shape, slices[channel].shape)
+        improved_value = np.nansum(slices[..., coefs_channel]*coefs[:slices.shape[0], :slices.shape[1]])
+        total_v = (np.clip(int(1/(8)*(8*bilinear_val + improved_value)), 0, 255))
+        result[i,j,channel] = total_v
+
+
+
+
+def improved_interpolation(raw_img: np.ndarray):
+
+    colored_img = get_colored_img(raw_img)
+
+    n_rows = colored_img.shape[0]
+    n_cols = colored_img.shape[1]
+
+    float_channel_values = colored_img.astype(dtype = 'float')
+    result = np.copy(colored_img)
+
+    mask = get_bayer_masks(n_rows, n_cols) #.reshape(3, n_rows, n_cols)
+    float_channel_values[~mask] = np.NaN
+
+    for i in range(1, n_rows-1):
+        for j in range(1, n_cols-1):
+            img_slice = float_channel_values[i-2 : i+3, j-2 : j+3]
+            set_improved_interpolated_pixel_value(result, mask, img_slice, i, j, 0)
+            set_improved_interpolated_pixel_value(result, mask, img_slice, i, j, 1)
+            set_improved_interpolated_pixel_value(result, mask, img_slice, i, j, 2)
+
+    return result
+ 
+
+def MSE(img_pred:np.ndarray, img_gt:np.ndarray):
+    return np.mean(np.power(img_pred - img_gt,2))
+
+def compute_psnr(img_pred: np.ndarray, img_gt: np.ndarray):
+
+    float_img_pred = img_pred.astype('float64')
+    float_img_gt = img_gt.astype('float64')
+
+    mse = MSE(float_img_pred, float_img_gt)
+    if mse == 0:
+        raise ValueError("Images are the same")
+
+    return 10*np.log10(np.max(np.power(float_img_gt,2))/mse)
+
+
+    pass
 
 
 # masks = get_bayer_masks(2, 2)
@@ -190,4 +303,25 @@ def bilinear_interpolation(colored_img: np.ndarray):
 # test_channel = np.array([[0, 5, 0],[0, 0, 0], [1, 0, 1]])
 # test_mask = np.array([[False, True, False],[False, False, False],[True, False, True]])
 # print(__bilinear_channel_interpolation(test_channel, test_mask))
+
+# raw_img = np.array([[8, 5, 3, 7, 1, 3],
+#                      [5, 2, 6, 8, 8, 1],
+#                      [9, 9, 8, 1, 6, 4],
+#                      [9, 4, 2, 3, 6, 8],
+#                      [5, 4, 3, 2, 8, 7],
+#                      [7, 3, 3, 6, 9, 3]], dtype='uint8')
+
+# gt_img = np.zeros((6, 6, 3), 'uint8')
+# r = slice(2, -2), slice(2, -2)
+# gt_img[r + (0,)] = np.array([[6, 1],
+#                           [1, 0]])
+# gt_img[r + (1,)] = np.array([[8, 4],
+#                           [2, 3]])
+# gt_img[r + (2,)] = np.array([[7, 2],
+#                           [2, 2]])
+# img = img_as_ubyte(improved_interpolation(raw_img))
+# # assert_ndarray_equal(actual=img[r],
+#                         #  correct=gt_img[r], atol=1)
+# print(gt_img[r + (0,)])
+# print(img[r + (0,)])
 
