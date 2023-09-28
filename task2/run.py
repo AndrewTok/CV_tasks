@@ -46,6 +46,12 @@ def check_test(data_dir):
 
     if diff > diff_max:
         res = 'Wrong answer'
+        print(gt_b_row, gt_b_col)
+        print(b_row, b_col)
+
+        print('red')
+        print(gt_r_row, gt_r_col)
+        print(r_row, r_col)
     else:
         res = 'Ok'
     if environ.get('CHECKER'):
