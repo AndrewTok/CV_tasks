@@ -1,20 +1,15 @@
 import numpy as np
 # from scipy.ndimage import shift
-from skimage.io import imread, imsave
-import matplotlib.pyplot as plt
-from skimage.draw import disk
+# from skimage.io import imread, imsave
+# import matplotlib.pyplot as plt
+# from skimage.draw import disk
 
 
 
-# r_start_row = 0
-# g_start_row = 0
 
 edges_coef = 10
 
 def backward_img_transform(splited_img: np.ndarray, delta: int, pad: int):
-    '''
-    развернуть изображение обратно и проследить за индексами
-    '''
     splited_img = splited_img.copy()
     tmp = splited_img[..., 2].copy()
     splited_img[..., 2] = splited_img[..., 0].copy()
@@ -32,10 +27,8 @@ def get_img_height(shape: np.ndarray):
 
 def forward_transform_img(_img: np.ndarray):
     pad = 3 - _img.shape[0] % 3 
-    img = np.pad(_img, ((0, pad),(0,0)), mode='empty') #_img.copy() #
+    img = np.pad(_img, ((0, pad),(0,0)), mode='empty')
     n_rows = img.shape[0] // 3
-
-    # print(img.shape[0])
 
     splited = img[:n_rows*3,:].reshape(3, -1, img.shape[1]).transpose(1, 2, 0)
     tmp = splited[..., 2].copy()
