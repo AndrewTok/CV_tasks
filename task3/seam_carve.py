@@ -1,5 +1,4 @@
 import numpy as np
-from common import assert_ndarray_equal
 
 
 
@@ -63,7 +62,6 @@ def compute_seam_matrix(energy: np.ndarray, mode: str, mask = None):
 
             min_j = np.argmin(slice)
             min = slice[min_j]
-            # min_j = min_j - 1 + j
 
             seam_matrix[i, j] = min + energy[i,j]
     
@@ -76,15 +74,14 @@ def compute_seam_matrix(energy: np.ndarray, mode: str, mask = None):
 def __find_seam_mask(seam_matrix: np.ndarray, mode: str):
 
     if mode == 'vertical':
-        seam_matrix = seam_matrix.T # np.rot90(seam_matrix, k = -1, axes=(0,1))
+        seam_matrix = seam_matrix.T
     
-    # print(seam_matrix)
     mask = np.zeros_like(seam_matrix, dtype='bool')
 
-    # print(seam_matrix)
+
     j = np.argmin(seam_matrix[seam_matrix.shape[0] - 1]) # start
     mask[seam_matrix.shape[0] - 1, j] = True
-    # print(mask.astype('uint8'))
+
     for i in range(seam_matrix.shape[0]-2, -1, -1):
         if j == 0:
             slice = seam_matrix[i, j : j + 2]
@@ -102,13 +99,11 @@ def __find_seam_mask(seam_matrix: np.ndarray, mode: str):
         min_j = min_j + delta + j
 
         mask[i, min_j] = True
-        # print(mask.astype('uint8'))
         j = min_j
 
     if mode == 'vertical':
-        mask = mask.T #np.rot90(mask, k = 1, axes=(0,1))
-    # print(mask)
-    return mask#.astype('uint8')
+        mask = mask.T
+    return mask
 
 modes = {
     'vertical shrink': 'vertical',
@@ -117,30 +112,19 @@ modes = {
 
 def remove_minimal_seam(image: np.ndarray, seam_matrix: np.ndarray, mode: str, mask = None):
     mode = modes[mode]
-    seam_mask = __find_seam_mask(seam_matrix, mode) #np.zeros_like(image, dtype='bool')
+    seam_mask = __find_seam_mask(seam_matrix, mode) 
 
     if mode == 'vertical':
         seam_mask = seam_mask.T
         image = image.transpose(1, 0, 2)
         if mask is not None:
             mask = mask.T
-    # print(seam_mask.shape)
-    # print(image.shape)
-
-    # result = np.zeros((mask.shape[0], mask.shape[1] - 1, 3))
     
     seam_mask_3 = np.stack([seam_mask,seam_mask,seam_mask], axis=2)
 
-    # print(seam_mask_3.shape)
-
-    result = image[~seam_mask_3].reshape(seam_mask.shape[0], -1, 3) # mask.shape[1] - 1
+    result = image[~seam_mask_3].reshape(seam_mask.shape[0], -1, 3) 
     if mask is not None:
         mask = mask[~seam_mask].reshape(seam_mask.shape[0], -1)
-
-    # for i in range(mask.shape[0]):
-    #     result[i,:,0] = image[i, ~mask[i], 0]
-    #     result[i,:,1] = image[i, ~mask[i],1]
-    #     result[i,:,2] = image[i, ~mask[i],2]
 
     if mode == 'vertical':
         result = result.transpose(1, 0, 2)
@@ -154,17 +138,3 @@ def seam_carve(img: np.ndarray, mode: str, mask: np.ndarray = None):
     energy = compute_energy(img)
     seam_matrix = compute_seam_matrix(energy, modes[mode], mask)
     return remove_minimal_seam(img, seam_matrix, mode, mask) 
-
-# a_v = np.array(
-#     [
-#         [3, 7, 7, 7, 16, 12, 19],
-#         [7, 9, 11, 13, 10, 11, 15],
-#         [7, 8, 13, 13, 18, 12, 11],
-#         [8, 8, 16, 14, 18, 20, 16],
-#     ],
-#     dtype=np.float64,
-# )
-# a = np.arange(a_v.shape[0] * a_v.shape[1] * 3).reshape((*a_v.shape, 3))
-
-# mask = __find_mask(a_v, 'vertical')
-# print(mask.astype('uint8'))
