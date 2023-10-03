@@ -59,6 +59,7 @@ def test_remove_minimal_seam_1v():
     )
 
     img, _, seam_mask = remove_minimal_seam(a, a_v, mode="vertical shrink")
+    assert_ndarray_equal(actual=seam_mask, correct=gt_v_seam)
     assert_ndarray_equal(actual=img, correct=gt_v)
     assert_ndarray_equal(actual=seam_mask, correct=gt_v_seam)
 
