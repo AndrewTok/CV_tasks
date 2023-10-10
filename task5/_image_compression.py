@@ -607,7 +607,7 @@ def compression_pipeline(img, c_type, param=1):
     if 'tmp' not in os.listdir() or not os.path.isdir('tmp'):
         os.mkdir('tmp')
         
-    np.savez_compressed(os.path.join('tmp', 'tmp.npz'), np.array(compressed, dtype = np.object_))
+    np.savez_compressed(os.path.join('tmp', 'tmp.npz'), compressed)
     size = os.stat(os.path.join('tmp', 'tmp.npz')).st_size * 8
     os.remove(os.path.join('tmp', 'tmp.npz'))
         
@@ -658,3 +658,21 @@ def get_jpeg_metrics_graph():
     plt.clf()
     fig = calc_metrics('Lenna.png', 'jpeg', [1, 10, 20, 50, 80, 100])
     fig.savefig("jpeg_metrics_graph.png")
+
+# pca_visualize()
+# # get_gauss_2()
+# block_1 = np.array([
+#     [-76, -73, -67, -62, -58, -67, -64, -55],
+#     [-65, -69, -73, -38, -19, -43, -59, -56],
+#     [-66, -69, -60, -15, 16, -24, -62, -55],
+#     [-65, -70, -57, -6, 26, -22, -58, -59],
+#     [-61, -67, -60, -24, -2, -40, -60, -58],
+#     [-49, -63, -68, -58, -51, -60, -70, -53],
+#     [-43, -57, -64, -69, -73, -67, -63, -45],
+#     [-41, -49, -59, -60, -63, -52, -50, -34]
+# ])
+
+# zigzag(block_1)
+
+# jpeg_visualize()
+get_pca_metrics_graph()
