@@ -7,6 +7,9 @@ from skimage.metrics import peak_signal_noise_ratio
 # !Этих импортов достаточно для решения данного задания, нельзя использовать другие библиотеки!
 
 
+def clip(img):
+    return np.clip(img, 0, 255)
+
 def pca_compression(matrix, p):
     """ Сжатие изображения с помощью PCA
     Вход: двумерная матрица (одна цветовая компонента картинки), количество компонент
@@ -77,7 +80,7 @@ def pca_visualize():
             compressed.append(pca_compression(img[...,j], p))
             pass
         decomp = pca_decompression(compressed)
-        axes[i // 3, i % 3].imshow(np.array(decomp))
+        axes[i // 3, i % 3].imshow(clip(np.array(decomp)).astype('uint8'))
         axes[i // 3, i % 3].set_title('Компонент: {}'.format(p))
 
     fig.savefig("pca_visualization.png")
@@ -88,20 +91,17 @@ def rgb2ycbcr(img):
     Вход: RGB изображение
     Выход: YCbCr изображение
     """
-    
-    # Your code here
-    
-    W = np.array([0, 128, 128])
-    coefs = np.array(
-        [
-            [0.299, 0.587, 0.114],
-            [-0.1687, -0.3313, 0.5],
-            [0.5, -0.4187, -0.0813]
-        ]
-    )
 
 
-    return 
+
+    R = img[..., 0]
+    G = img[..., 1]
+    B = img[..., 2]
+
+    Y = 0 + 0.299*R + 0.587*G + 0.114*B
+    Cb = 128 - 0.1687*R - 0.3313*G + 0.5*B
+    Cr = 128 + 0.5*R - 0.4187 * G  - 0.0813*B
+    return np.stack([Y, Cb, Cr], axis=2)
 
 
 def ycbcr2rgb(img):
@@ -111,8 +111,16 @@ def ycbcr2rgb(img):
     """
     
     # Your code here
+
+    Y = img[..., 0]
+    Cb = img[..., 1]
+    Cr = img[..., 2]
+
+    R = Y + 1.402*(Cr - 128)
+    G = Y - 0.34414*(Cb - 128) - 0.71414*(Cr - 128) 
+    B = Y + 1.77*(Cb - 128)
     
-    return ...
+    return np.stack([R,G,B], axis = 2)
 
 
 def get_gauss_1():
@@ -122,7 +130,16 @@ def get_gauss_1():
         rgb_img = rgb_img[..., :3]
 
     # Your code here
+    ycbcr = rgb2ycbcr(rgb_img)
+    # gaussian_filter
+    r = 10
+    Cb_blurred = gaussian_filter(ycbcr[..., 1], r)
+    Cr_blurred = gaussian_filter(ycbcr[..., 2], r)
+    ycbcr[..., 1] = Cb_blurred
+    ycbcr[..., 2] = Cr_blurred
 
+    rgb = ycbcr2rgb(ycbcr)
+    plt.imshow(clip(rgb).astype('uint8'))
     plt.savefig("gauss_1.png")
 
 
@@ -133,6 +150,13 @@ def get_gauss_2():
         rgb_img = rgb_img[..., :3]
 
     # Your code here
+    ycbcr = rgb2ycbcr(rgb_img)
+    # gaussian_filter
+    r = 10
+    Y_blured = gaussian_filter(ycbcr[...,0], r)
+    ycbcr[...,0] = Y_blured
+    rgb = ycbcr2rgb(ycbcr)
+    plt.imshow(clip(rgb).astype('uint8'))
 
     plt.savefig("gauss_2.png")
 
@@ -142,11 +166,13 @@ def downsampling(component):
     Вход: цветовая компонента размера [A, B, 1]
     Выход: цветовая компонента размера [A // 2, B // 2, 1]
     """
-    
-    # Your code here
-    
-    return ...
 
+    return gaussian_filter(component, 10)[0::2,0::2]
+
+def __alpha(u: int):
+    if u == 0:
+        return 1/np.sqrt(2)
+    return 1
 
 def dct(block):
     """Дискретное косинусное преобразование
@@ -156,7 +182,21 @@ def dct(block):
 
     # Your code here
 
-    return ...
+    i_indices = np.arange(8)
+    i_indices = np.tile(i_indices[:,None], 8)
+    j_indices = i_indices.T
+
+    G = np.zeros((8,8))
+
+    for u in range(8):
+        for v in range(8):
+            alpha_v = __alpha(v)
+            alpha_u = __alpha(u)
+            cos_1 = np.cos((2*i_indices + 1)/16*u*np.pi)
+            cos_2 = np.cos((2*j_indices+ 1)/16*v*np.pi)
+            sum = np.sum(block*cos_1*cos_2)
+            G[u,v] = 1/4*alpha_v*alpha_u*sum
+    return G
 
 
 # Матрица квантования яркости
@@ -192,7 +232,7 @@ def quantization(block, quantization_matrix):
     
     # Your code here
     
-    return ...
+    return np.round(block/quantization_matrix)
 
 
 def own_quantization_matrix(default_quantization_matrix, q):
@@ -204,9 +244,17 @@ def own_quantization_matrix(default_quantization_matrix, q):
 
     assert 1 <= q <= 100
 
-    # Your code here
+    if q >= 1 and q < 50:
+        S = 5000/q
+    elif q >= 50 and q <= 99:
+        S = 200 - 2*q
+    else:
+        S = 1
 
-    return ...
+    Q = np.floor((50 + S*default_quantization_matrix.astype('float64'))/100)
+    Q[Q <= 0] = 1
+
+    return Q
 
 
 def zigzag(block):
@@ -215,9 +263,51 @@ def zigzag(block):
     Выход: список из элементов входного блока, получаемый после его обхода зигзаг-сканированием
     """
     
-    # Your code here
+    num_rows = block.shape[0]
+    num_cols = block.shape[1]
+    cur_row,cur_col = 0,0
+    cur_index = 0
+    result =  [] #np.zeros(num_cols*num_rows)
+    # source https://github.com/xaviraol/JPEG/blob/master/jpeg/zigzag.m
+    while cur_row<=num_rows and cur_col<=num_cols:
+        if cur_row==0 and (cur_row+cur_col) % 2==0 and cur_col != num_cols - 1:
+            result.append(block[cur_row,cur_col]) # [cur_index] = 
+            cur_col=cur_col+1							#%move right at the top
+            cur_index=cur_index+1
+            
+        elif cur_row==num_rows-1 and (cur_row+cur_col) % 2 !=0 and cur_col !=num_cols-1:
+            result.append(block[cur_row,cur_col]) #result[cur_index] = block[cur_row,cur_col]
+            cur_col=cur_col+1						#%move right at the bottom
+            cur_index=cur_index+1
+            
+        elif cur_col==0 and (cur_row+cur_col)%2 !=0 and cur_row!=num_rows-1:
+            result.append(block[cur_row,cur_col]) #result[cur_index] = block[cur_row,cur_col]
+            cur_row=cur_row+1#%move down at the left
+            cur_index=cur_index+1
+            
+        elif cur_col==num_cols-1 and (cur_row+cur_col) %2 ==0 and cur_row!=num_rows-1:
+            result.append(block[cur_row,cur_col]) #result[cur_index] = block[cur_row,cur_col]
+            cur_row=cur_row+1					#%move down at the right
+            cur_index=cur_index+1
+            
+        elif cur_col!=0 and cur_row!=num_rows-1 and (cur_row+cur_col) %2 !=0:
+            result.append(block[cur_row,cur_col]) #result[cur_index]=block[cur_row,cur_col]
+            cur_row=cur_row+1	
+            cur_col=cur_col-1	#%move diagonally left down
+            cur_index=cur_index+1
+            
+        elif cur_row!=0 and cur_col!=num_cols-1 and (cur_row+cur_col) % 2==0:
+            result.append(block[cur_row,cur_col]) #result[cur_index]=block[cur_row,cur_col]
+            cur_row=cur_row-1		
+            cur_col=cur_col+1	#%move diagonally right up
+            cur_index=cur_index+1
+            
+        elif cur_row==num_rows-1 and cur_col==num_cols-1:	#%obtain the bottom right element
+            result.append(block[cur_row,cur_col]) #result[-1] = block[-1,-1]							#%end of the operation
+            break						
+        
     
-    return ...
+    return result
 
 
 def compression(zigzag_list):
@@ -225,10 +315,24 @@ def compression(zigzag_list):
     Вход: список после зигзаг-сканирования
     Выход: сжатый список в формате, который был приведен в качестве примера в самом начале данного пункта
     """
-
     # Your code here
-
-    return ...
+    count = 0
+    new_el = True
+    res = []
+    for i in range(len(zigzag_list)):
+        val = zigzag_list[i]
+        if val != 0:
+            res.append(val)
+        else:
+            if new_el:
+                res.append(val)
+                new_el = False
+                count = 0
+            count += 1
+            if i + 1 == len(zigzag_list) or zigzag_list[i+1] != 0:
+                res.append(count)
+                new_el = True
+    return res
 
 
 def jpeg_compression(img, quantization_matrixes):
@@ -240,15 +344,39 @@ def jpeg_compression(img, quantization_matrixes):
     # Your code here
     
     # Переходим из RGB в YCbCr
-    ...
+    YCbCr = rgb2ycbcr(img)
     # Уменьшаем цветовые компоненты
-    ...
+    YCbCr[..., 1] = downsampling(YCbCr[...,1])
+    YCbCr[..., 2] = downsampling(YCbCr[...,2])
     # Делим все компоненты на блоки 8x8 и все элементы блоков переводим из [0, 255] в [-128, 127]
-    ...
-    # Применяем ДКП, квантование, зизгаз-сканирование и сжатие
-    ...
+    
+    i_blocks_count = YCbCr.shape[0]//8
+    j_blocks_count = YCbCr.shape[1]//8
+    blocks = []
+    for i in range(i_blocks_count-1):
+        for j in range(j_blocks_count-1):
+            block = YCbCr[i*8:(i+1)*8,j*8:(j+1)*8]-128
 
-    return ...
+            dct_block = dct(block)
+            dct_block[..., 0] = quantization(dct_block[..., 0], quantization_matrixes[0])
+            dct_block[..., 1] = quantization(dct_block[..., 1], quantization_matrixes[1])
+            dct_block[..., 2] = quantization(dct_block[..., 2], quantization_matrixes[1])
+
+            zig_zag_0 = zigzag(dct_block[...,0])
+            zigzag_1 = zigzag(dct_block[...,1])
+            zigzag_2 = zigzag(dct_block[...,2])       
+
+            compressed_0 = compression(zig_zag_0)
+            compressed_1 = compression(zigzag_1)
+            compressed_2 = compression(zigzag_2) 
+
+            blocks.append(compressed_0)
+            blocks.append(compressed_1)
+            blocks.append(compressed_2)
+
+    # Применяем ДКП, квантование, зизгаз-сканирование и сжатие
+
+    return blocks
 
 
 def inverse_compression(compressed_list):
@@ -259,7 +387,19 @@ def inverse_compression(compressed_list):
     
     # Your code here
 
-    return ...
+    result = []
+    i = 0
+    while i < len(compressed_list):
+        val = compressed_list[i]
+        if val == 0:
+            for k in range(compressed_list[i+1]):
+                result.append(val)
+            i+=2
+        else:
+            result.append(val)
+            i+=1
+
+    return result
 
 
 def inverse_zigzag(input):
@@ -269,8 +409,60 @@ def inverse_zigzag(input):
     """
 
     # Your code here
+
+    cur_row,cur_col = 7,7
+
+    # while cur_col != 0 and cur_row != 0:
+    num_rows = 8
+    num_cols = 8
+    block = np.zeros((num_rows, num_cols))
+    cur_row,cur_col = 0,0
+    cur_index = 0
+    while cur_row<=num_rows and cur_col<=num_cols:
+        if cur_row==0 and (cur_row+cur_col) % 2==0 and cur_col != num_cols - 1:
+            block[cur_row,cur_col] = input[cur_index]
+            # result.append(block[cur_row,cur_col]) # [cur_index] = 
+            cur_col=cur_col+1							#%move right at the top
+            cur_index=cur_index+1
+            
+        elif cur_row==num_rows-1 and (cur_row+cur_col) % 2 !=0 and cur_col !=num_cols-1:
+            block[cur_row,cur_col] = input[cur_index]
+            # result.append(block[cur_row,cur_col]) #result[cur_index] = block[cur_row,cur_col]
+            cur_col=cur_col+1						#%move right at the bottom
+            cur_index=cur_index+1
+            
+        elif cur_col==0 and (cur_row+cur_col)%2 !=0 and cur_row!=num_rows-1:
+            block[cur_row,cur_col] = input[cur_index]
+            # result.append(block[cur_row,cur_col]) #result[cur_index] = block[cur_row,cur_col]
+            cur_row=cur_row+1#%move down at the left
+            cur_index=cur_index+1
+            
+        elif cur_col==num_cols-1 and (cur_row+cur_col) %2 ==0 and cur_row!=num_rows-1:
+            block[cur_row,cur_col] = input[cur_index]
+            # result.append(block[cur_row,cur_col]) #result[cur_index] = block[cur_row,cur_col]
+            cur_row=cur_row+1					#%move down at the right
+            cur_index=cur_index+1
+            
+        elif cur_col!=0 and cur_row!=num_rows-1 and (cur_row+cur_col) %2 !=0:
+            block[cur_row,cur_col] = input[cur_index]
+            # result.append(block[cur_row,cur_col]) #result[cur_index]=block[cur_row,cur_col]
+            cur_row=cur_row+1	
+            cur_col=cur_col-1	#%move diagonally left down
+            cur_index=cur_index+1
+            
+        elif cur_row!=0 and cur_col!=num_cols-1 and (cur_row+cur_col) % 2==0:
+            block[cur_row,cur_col] = input[cur_index]
+            # result.append(block[cur_row,cur_col]) #result[cur_index]=block[cur_row,cur_col]
+            cur_row=cur_row-1		
+            cur_col=cur_col+1	#%move diagonally right up
+            cur_index=cur_index+1
+            
+        elif cur_row==num_rows-1 and cur_col==num_cols-1:	#%obtain the bottom right element
+            block[cur_row,cur_col] = input[cur_index]
+            # result.append(block[cur_row,cur_col]) #result[-1] = block[-1,-1]							#%end of the operation
+            break						
     
-    return ...
+    return block
 
 
 def inverse_quantization(block, quantization_matrix):
@@ -279,9 +471,8 @@ def inverse_quantization(block, quantization_matrix):
     Выход: блок размера 8x8 после квантования. Округление не производится
     """
     
-    # Your code here
-    
-    return ...
+
+    return block*quantization_matrix
 
 
 def inverse_dct(block):
@@ -290,9 +481,24 @@ def inverse_dct(block):
     Выход: блок размера 8x8 после обратного ДКП. Округление осуществляем с помощью np.round
     """
 
-    # Your code here
+    u_indices = np.arange(8)
+    u_indices = np.tile(u_indices[:,None], 8)
+    v_indices = u_indices.T
 
-    return ...
+    f = np.zeros((8,8))
+
+    for i in range(8):
+        for j in range(8):
+            alpha_v = np.ones_like(f)  #__alpha(v_indices)
+            alpha_v[v_indices == 0] = 1/np.sqrt(2)
+            alpha_u = np.ones_like(f)
+            alpha_u[u_indices == 0] = 1/np.sqrt(2)
+            cos_1 = np.cos((2*i + 1)/16*u_indices*np.pi)
+            cos_2 = np.cos((2*j+ 1)/16*v_indices*np.pi)
+            sum = np.sum(alpha_v*alpha_u*block*cos_1*cos_2)
+            f[i,j] = 1/4*sum
+
+    return np.round(f)
 
 
 def upsampling(component):
@@ -302,6 +508,9 @@ def upsampling(component):
     """
     
     # Your code here
+    result = np.zeros((2*component.shape[0], 2*component.shape[1]))
+    result[::2,::2] = component
+    
 
     return ...
 
@@ -414,4 +623,19 @@ def get_jpeg_metrics_graph():
     fig = calc_metrics('Lenna.png', 'jpeg', [1, 10, 20, 50, 80, 100])
     fig.savefig("jpeg_metrics_graph.png")
 
-pca_visualize()
+# pca_visualize()
+# # get_gauss_2()
+# block_1 = np.array([
+#     [-76, -73, -67, -62, -58, -67, -64, -55],
+#     [-65, -69, -73, -38, -19, -43, -59, -56],
+#     [-66, -69, -60, -15, 16, -24, -62, -55],
+#     [-65, -70, -57, -6, 26, -22, -58, -59],
+#     [-61, -67, -60, -24, -2, -40, -60, -58],
+#     [-49, -63, -68, -58, -51, -60, -70, -53],
+#     [-43, -57, -64, -69, -73, -67, -63, -45],
+#     [-41, -49, -59, -60, -63, -52, -50, -34]
+# ])
+
+# zigzag(block_1)
+
+
