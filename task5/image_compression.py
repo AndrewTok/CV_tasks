@@ -62,7 +62,7 @@ def pca_decompression(compressed):
     # print(res[...,0])
     # print(res[...,1])
     # print(res[...,2])
-    return res
+    return res.astype('uint8')
 
 
 def pca_visualize():

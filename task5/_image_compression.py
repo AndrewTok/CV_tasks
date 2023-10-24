@@ -675,4 +675,4 @@ def get_jpeg_metrics_graph():
 # zigzag(block_1)
 
 # jpeg_visualize()
-get_pca_metrics_graph()
+# get_pca_metrics_graph()
