@@ -18,7 +18,7 @@ class FacesPointsDataset(Dataset):
         imgs_path: str,
         labels_path: str,
         mode: str,
-        fraction = 0.8,
+        # fraction = 0.8,
         transform = None,
     ):
         self.imgs_path = imgs_path
@@ -27,25 +27,35 @@ class FacesPointsDataset(Dataset):
         self.fraction = fraction
         self.transform = transform
 
-        self.labels_df = pd.read_csv(labels_path)
+        if labels_path is not None:
+            self.labels_df = pd.read_csv(labels_path)
+        else:
+            self.labels_df = None
 
         self.items = []
 
         imgs = os.listdir(imgs_path)
         imgs_num = len(imgs)
-        
-        if mode == 'train':
-            start = 0
-            end = int(fraction*imgs_num)
-        else:
-            start = int(fraction*imgs_num)
-            end = imgs_num
+        start = 0
+        end = imgs_num        
+        # if mode == 'train':
+        #     start = 0
+        #     end = int(fraction*imgs_num)
+        # elif mode == 'val':
+        #     start = int(fraction*imgs_num)
+        #     end = imgs_num
+        # else:
+        #     start = 0
+        #     end = imgs_num
 
         for i in range(start, end):
-            img = imgs[i]
-            labels = self.labels_df.loc[self.labels_df['filename'] == img][self.labels_df.columns[1:]].values
-            labels = torch.from_numpy(labels)
-            self.items.append((os.path.join(self.imgs_path, img), labels[0]))
+            # img = imgs[i]
+            if self.labels_df is not None:
+                labels = self.labels_df.loc[self.labels_df['filename'] == imgs[i]][self.labels_df.columns[1:]].values
+                labels = torch.from_numpy(labels)
+                self.items.append((imgs[i], labels[0]))
+            else:
+                self.items.append((imgs[i], None))
 
         # print(self.items[0][1].shape)
 
@@ -71,8 +81,8 @@ class FacesPointsDataset(Dataset):
         return transformed
 
     def __getitem__(self, index):
-        img_path, labels = self.items[index]
-
+        filename, labels = self.items[index]
+        img_path = os.path.join(self.imgs_path, filename)
         ## read image
         image = Image.open(img_path).convert("RGB")
         image = np.array(image).astype(np.float32)
@@ -83,10 +93,12 @@ class FacesPointsDataset(Dataset):
         
         ## to Tensor
         x = torch.from_numpy(image).permute(2, 0, 1)
+        print(image.shape)
         x_scale = 100/image.shape[1]
         y_scale = 100/image.shape[0]
         x = torchvision.transforms.functional.resize(x, (100,100), antialias=True)
-        labels = self.transform_labels(labels, x_scale, y_scale)
+        if labels is not None:
+            labels = self.transform_labels(labels, x_scale, y_scale)
 
         return x, labels
 
@@ -171,31 +183,46 @@ class FacesPointsTrainingModule(pl.LightningModule):
         self.train_loss.clear()
 
 
+    def forward(self, x):
+        return self.model(x)
 
 
-def train_detector(fast_train=True):
+def train_detector(train_gt, train_img_dir, fast_train=True):
     '''
     Возвращает словарь размером N, ключи которого — имена файлов, а значения —
     массив чисел длины 28 с координатами точек лица [x1, y1, . . . , x14, y14]. Здесь N — количество
     изображений.
     
     '''
-    train_dataset = FacesPointsDataset('tests/00_test_img_input/train/images/', 'tests/00_test_img_input/train/gt.csv', 'train')
+    train_dataset = FacesPointsDataset(train_img_dir, train_gt, 'train')
     train_loader = DataLoader(train_dataset, 16)
     training_module = FacesPointsTrainingModule()
-    trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=16)
-
+    if fast_train:
+        trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=8)
+    else:
+        trainer = pl.Trainer(accelerator='cpu', devices=0, max_epochs=3)
+    
     trainer.fit(training_module, train_loader)
     
     pass
 
 
 
-def detect():
+def detect(model_filename, test_img_dir):
 
+    
+    module = FacesPointsTrainingModule.load_from_checkpoint(model_filename, map_location='cpu')
 
+    dataset = FacesPointsDataset(test_img_dir, None, mode='test', fraction=None, transform=None)
 
-    pass
+    result = {}
+
+    for i in range(len(dataset)):
+        img, _ = dataset[i]
+        pred = module[img[None,:]].detach()[0]
+        result[dataset.items[i][0]] = pred
+    
+    return result
 
 
 

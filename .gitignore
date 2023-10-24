@@ -1,1 +1,5 @@
-#*test
+*test
+*tests/
+*public_tests/
+task7/public_tests/*
+.gitignore
