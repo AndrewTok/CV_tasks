@@ -163,6 +163,7 @@ if __name__ == '__main__':
         tests_dir = argv[1]
 
         results = []
+        print(join(tests_dir, '[0-9][0-9]_*_input'))
         for input_dir in sorted(glob(join(tests_dir, '[0-9][0-9]_*_input'))):
             output_dir = sub('input$', 'check', input_dir)
             run_output_dir = join(output_dir, 'output')

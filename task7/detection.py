@@ -24,7 +24,7 @@ class FacesPointsDataset(Dataset):
         self.imgs_path = imgs_path
         self.labels_path = labels_path
         self.mode = mode
-        self.fraction = fraction
+        # self.fraction = fraction
         self.transform = transform
 
         if labels_path is not None:
@@ -38,6 +38,7 @@ class FacesPointsDataset(Dataset):
         imgs_num = len(imgs)
         start = 0
         end = imgs_num        
+        # print(self.labels_df.head())
         # if mode == 'train':
         #     start = 0
         #     end = int(fraction*imgs_num)
@@ -51,9 +52,16 @@ class FacesPointsDataset(Dataset):
         for i in range(start, end):
             # img = imgs[i]
             if self.labels_df is not None:
+                # print(imgs[i])
+                # print(self.labels_df.loc[i])
                 labels = self.labels_df.loc[self.labels_df['filename'] == imgs[i]][self.labels_df.columns[1:]].values
                 labels = torch.from_numpy(labels)
-                self.items.append((imgs[i], labels[0]))
+                
+                if len(labels.shape) > 1:
+                    self.items.append((imgs[i], labels[0]))
+                else:
+                    self.items.append((imgs[i], labels))
+
             else:
                 self.items.append((imgs[i], None))
 
@@ -77,7 +85,7 @@ class FacesPointsDataset(Dataset):
             else:
                 scale = y_scale
             transformed[i] = int(transformed[i]*scale)
-
+            # transformed = self.transform()
         return transformed
 
     def __getitem__(self, index):
@@ -93,7 +101,7 @@ class FacesPointsDataset(Dataset):
         
         ## to Tensor
         x = torch.from_numpy(image).permute(2, 0, 1)
-        print(image.shape)
+        # print(image.shape)
         x_scale = 100/image.shape[1]
         y_scale = 100/image.shape[0]
         x = torchvision.transforms.functional.resize(x, (100,100), antialias=True)
@@ -134,12 +142,18 @@ class FacesPointsDetector(torch.nn.Module):
         super().__init__()
 
         self.layers = nn.Sequential(
-            DetectorBlock(3, 64, 3),
-            DetectorBlock(64, 128, 3),
+            DetectorBlock(3, 64, 7),
+            DetectorBlock(64, 128, 5),
             DetectorBlock(128, 256, 3),
+            DetectorBlock(256, 512, 3),
             Flattener(),
-            nn.LazyLinear(out_features=64),
+            nn.LazyLinear(out_features=128),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
+            nn.LazyLinear(out_features=64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(p=0.1),
             nn.LazyLinear(out_features=28)
         )
 
@@ -169,7 +183,40 @@ class FacesPointsTrainingModule(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.SGD(self.parameters(), lr=0.001)
+        """Define optimizers and LR schedulers."""
+        optimizer = torch.optim.Adam(self.parameters(), lr=2e-3, weight_decay=5e-4)
+
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size = 8,
+            gamma = 0.5,
+            verbose = True
+        )
+        # torch.optim.lr_scheduler.ReduceLROnPlateau(
+        #     optimizer,
+        #     mode="min",
+        #     factor=0.2,
+        #     patience=5,
+        #     verbose=True,
+        #     # eps = 1e-1,
+        # )
+        lr_dict = {
+            # The scheduler instance
+            "scheduler": lr_scheduler,
+            # The unit of the scheduler's step size, could also be 'step'.
+            # 'epoch' updates the scheduler on epoch end whereas 'step'
+            # updates it after a optimizer update.
+            "interval": "epoch",
+            # How many epochs/steps should pass between calls to
+            # `scheduler.step()`. 1 corresponds to updating the learning
+            # rate after every epoch/step.
+            "frequency": 1,
+            # Metric to to monitor for schedulers like `ReduceLROnPlateau`
+            "monitor": "loss",
+        }
+
+        return [optimizer], [lr_dict]
+        # return torch.optim.Adam(self.parameters(), lr=0.001, weight_decay=1e-3)
 
     ## OPTIONAL:
     def on_train_epoch_end(self):
@@ -195,16 +242,16 @@ def train_detector(train_gt, train_img_dir, fast_train=True):
     
     '''
     train_dataset = FacesPointsDataset(train_img_dir, train_gt, 'train')
-    train_loader = DataLoader(train_dataset, 16)
+    train_loader = DataLoader(train_dataset, 32)
     training_module = FacesPointsTrainingModule()
-    if fast_train:
-        trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=8)
+    if not fast_train:
+        trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=32)
     else:
-        trainer = pl.Trainer(accelerator='cpu', devices=0, max_epochs=3)
+        trainer = pl.Trainer(accelerator='cpu', devices=0, max_epochs=1)
     
     trainer.fit(training_module, train_loader)
     
-    pass
+    return training_module.model
 
 
 
@@ -213,7 +260,7 @@ def detect(model_filename, test_img_dir):
     
     module = FacesPointsTrainingModule.load_from_checkpoint(model_filename, map_location='cpu')
 
-    dataset = FacesPointsDataset(test_img_dir, None, mode='test', fraction=None, transform=None)
+    dataset = FacesPointsDataset(test_img_dir, None, mode='test', transform=None)
 
     result = {}
 
