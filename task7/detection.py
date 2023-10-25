@@ -8,6 +8,8 @@ import os
 import torchvision
 from PIL import Image
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 
 
@@ -147,11 +149,11 @@ class FacesPointsDetector(torch.nn.Module):
             DetectorBlock(128, 256, 3),
             DetectorBlock(256, 512, 3),
             Flattener(),
-            nn.LazyLinear(out_features=128),
-            nn.BatchNorm1d(128),
+            nn.LazyLinear(out_features=512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
-            nn.LazyLinear(out_features=64),
-            nn.BatchNorm1d(64),
+            nn.LazyLinear(out_features=256),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.Dropout(p=0.1),
             nn.LazyLinear(out_features=28)
@@ -168,12 +170,13 @@ class FacesPointsTrainingModule(pl.LightningModule):
     def __init__(self):
         super().__init__()
         self.model = FacesPointsDetector()
+        self.loss_f = F.mse_loss 
         self.train_loss = []
 
     def training_step(self, batch, batch_idx):
         x, y_gt = batch
         y_pr = self.model(x)
-        loss = F.mse_loss(y_pr, y_gt.float())
+        loss = self.loss_f(y_pr, y_gt.float())
 
         metrics = {'loss':loss.detach()}
         self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True, logger=True)
@@ -184,12 +187,12 @@ class FacesPointsTrainingModule(pl.LightningModule):
 
     def configure_optimizers(self):
         """Define optimizers and LR schedulers."""
-        optimizer = torch.optim.Adam(self.parameters(), lr=2e-3, weight_decay=5e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=5e-4) #, weight_decay=5e-4
 
         lr_scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
             step_size = 8,
-            gamma = 0.5,
+            gamma = 1,
             verbose = True
         )
         # torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -229,27 +232,47 @@ class FacesPointsTrainingModule(pl.LightningModule):
         # don't forget to clear the saved losses
         self.train_loss.clear()
 
+    # OPTIONAL
+    def validation_step(self, batch, batch_idx):
+        """the full validation loop"""
+        x, y_gt = batch
+
+        y_pr = self.model(x)
+        loss = self.loss_f(y_pr, y_gt.float())
+
+        metrics = {"val_loss": loss}
+        self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True, logger=True)
+
 
     def forward(self, x):
         return self.model(x)
 
 
-def train_detector(train_gt, train_img_dir, fast_train=True):
+def train_detector(train_gt, train_img_dir, fast_train=True, val_loader = None):
     '''
     Возвращает словарь размером N, ключи которого — имена файлов, а значения —
     массив чисел длины 28 с координатами точек лица [x1, y1, . . . , x14, y14]. Здесь N — количество
     изображений.
     
     '''
+    ## Save the training module periodically by monitoring a quantity.
+    # MyTrainingModuleCheckpoint = ModelCheckpoint(
+    #     dirpath="runs/faces_points_detector",
+    #     filename="{epoch}-{val_acc:.3f}",
+    #     monitor="val_loss",
+    #     mode="min",
+    #     save_top_k=1,
+    # )
+
     train_dataset = FacesPointsDataset(train_img_dir, train_gt, 'train')
-    train_loader = DataLoader(train_dataset, 32)
+    train_loader = DataLoader(train_dataset, 32, drop_last=True)
     training_module = FacesPointsTrainingModule()
     if not fast_train:
         trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=32)
     else:
         trainer = pl.Trainer(accelerator='cpu', devices=0, max_epochs=1)
     
-    trainer.fit(training_module, train_loader)
+    trainer.fit(training_module, train_loader, val_dataloaders=val_loader)
     
     return training_module.model
 
