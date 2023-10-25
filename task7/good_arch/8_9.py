@@ -153,18 +153,21 @@ class FacesPointsDetector(torch.nn.Module):
         super().__init__()
 
         self.layers = nn.Sequential(
-            DetectorBlock(3, 64, 7),
-            DetectorBlock(64, 128, 5),
-            DetectorBlock(128, 256, 3),
-            DetectorBlock(256, 512, 3),
+            DetectorBlock(3, 64, 7, True),
+            DetectorBlock(64, 128, 5, True),
+            DetectorBlock(128, 256, 3, True),
+            DetectorBlock(256, 512, 3, True),
             Flattener(),
+            nn.LazyLinear(out_features=256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.LazyLinear(out_features=512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
             nn.LazyLinear(out_features=128),
             nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.LazyLinear(out_features=64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(p=0.1),
+            # nn.Dropout(p=0.1),
             nn.LazyLinear(out_features=28)
         )
 
@@ -246,7 +249,7 @@ class FacesPointsTrainingModule(pl.LightningModule):
 
     def configure_optimizers(self):
         """Define optimizers and LR schedulers."""
-        optimizer = torch.optim.Adam(self.parameters(), lr=2e-3, weight_decay=5e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=5e-4)
 
         lr_scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,

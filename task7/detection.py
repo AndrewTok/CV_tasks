@@ -1,3 +1,5 @@
+from typing import Any
+from pytorch_lightning.utilities.types import STEP_OUTPUT
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
@@ -8,8 +10,6 @@ import os
 import torchvision
 from PIL import Image
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 
 
@@ -116,16 +116,24 @@ class FacesPointsDataset(Dataset):
 class DetectorBlock(torch.nn.Module):
 
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, max_pool = True):
         super().__init__()
+        self.max_pool = None
         self.block = nn.Sequential(
             nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size),
             nn.BatchNorm2d(num_features=out_channels),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2),
+            #nn.MaxPool2d(kernel_size=2),
         )
+        if max_pool:
+            self.max_pool = nn.MaxPool2d(kernel_size=2)
+
     def forward(self, x):
-        return self.block(x)
+        x = self.block(x)
+        if self.max_pool:
+            x = self.max_pool(x)
+        return x
+    
 
 class Flattener(nn.Module):
 
@@ -135,6 +143,7 @@ class Flattener(nn.Module):
     def forward(self, x):
 
         batch_size, *_ = x.shape
+        # print(batch_size)
         res = x.view(batch_size, -1) # torch.flatten(x) #
         return res
 
@@ -144,17 +153,69 @@ class FacesPointsDetector(torch.nn.Module):
         super().__init__()
 
         self.layers = nn.Sequential(
-            DetectorBlock(3, 64, 7),
-            DetectorBlock(64, 128, 5),
-            DetectorBlock(128, 256, 3),
-            DetectorBlock(256, 512, 3),
+            DetectorBlock(3, 64, 7, True),
+            DetectorBlock(64, 128, 5, True),
+            DetectorBlock(128, 256, 3, True),
+            DetectorBlock(256, 512, 3, True),
             Flattener(),
-            nn.LazyLinear(out_features=512),
-            nn.BatchNorm1d(512),
+            # nn.LazyLinear(out_features=256),
+            # nn.BatchNorm1d(256),
+            # nn.ReLU(),
+            # nn.LazyLinear(out_features=512),
+            # nn.BatchNorm1d(512),
+            # nn.ReLU(),
+            nn.LazyLinear(out_features=128),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.LazyLinear(out_features=256),
-            nn.BatchNorm1d(256),
+            # nn.Dropout(p=0.1),
+            nn.LazyLinear(out_features=28)
+        )
+
+
+    def forward(self, x):
+        return self.layers(x)
+
+
+class FacePointsDetectorImproved(torch.nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+        self.layers = nn.Sequential(
+            DetectorBlock(3, 64, 3, False),
+            DetectorBlock(64, 64, 3, True),
+
+            DetectorBlock(64, 128, 3, False),
+            DetectorBlock(128, 128, 3, True),
+
+            DetectorBlock(128, 256, 3, False),
+            DetectorBlock(256, 256, 3, False),
+            #DetectorBlock(256, 256, 3, False),
+            DetectorBlock(256, 256, 3, True),
+
+            DetectorBlock(256, 512, 3, False),
+            DetectorBlock(512, 512, 3, False),
+           # DetectorBlock(512, 512, 3, False),
+            DetectorBlock(512, 512, 3, True),
+
+            #DetectorBlock(512, 512, 3, False),
+            #DetectorBlock(512, 512, 3, False),
+            #DetectorBlock(512, 512, 3, False),
+            #DetectorBlock(512, 512, 3, True),
+
+            Flattener(),
+            # nn.LazyLinear(out_features=4096),
+            # nn.BatchNorm1d(4096),
+            # nn.ReLU(),
+            nn.LazyLinear(out_features=4096),
+            nn.BatchNorm1d(4096),
             nn.ReLU(),
+            nn.LazyLinear(out_features=2048),
+            nn.BatchNorm1d(2048),
+            nn.ReLU(),
+            #nn.LazyLinear(out_features=1024),
+            #nn.BatchNorm1d(1024),
+            #nn.ReLU(),
             nn.Dropout(p=0.1),
             nn.LazyLinear(out_features=28)
         )
@@ -164,13 +225,14 @@ class FacesPointsDetector(torch.nn.Module):
         return self.layers(x)
 
 
-
-
 class FacesPointsTrainingModule(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, vgg = False):
         super().__init__()
-        self.model = FacesPointsDetector()
-        self.loss_f = F.mse_loss 
+        if vgg:
+            self.model = FacePointsDetectorImproved()
+        else:
+            self.model = FacesPointsDetector()
+        self.loss_f =  F.mse_loss
         self.train_loss = []
 
     def training_step(self, batch, batch_idx):
@@ -187,11 +249,11 @@ class FacesPointsTrainingModule(pl.LightningModule):
 
     def configure_optimizers(self):
         """Define optimizers and LR schedulers."""
-        optimizer = torch.optim.Adam(self.parameters(), lr=5e-4) #, weight_decay=5e-4
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=5e-4)
 
         lr_scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
-            step_size = 8,
+            step_size = 15,
             gamma = 1,
             verbose = True
         )
@@ -232,21 +294,18 @@ class FacesPointsTrainingModule(pl.LightningModule):
         # don't forget to clear the saved losses
         self.train_loss.clear()
 
-    # OPTIONAL
     def validation_step(self, batch, batch_idx):
-        """the full validation loop"""
         x, y_gt = batch
-
         y_pr = self.model(x)
         loss = self.loss_f(y_pr, y_gt.float())
 
-        metrics = {"val_loss": loss}
+        metrics = {'val_loss':loss}
         self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True, logger=True)
 
+        pass
 
     def forward(self, x):
         return self.model(x)
-
 
 def train_detector(train_gt, train_img_dir, fast_train=True, val_loader = None):
     '''
@@ -255,24 +314,17 @@ def train_detector(train_gt, train_img_dir, fast_train=True, val_loader = None):
     изображений.
     
     '''
-    ## Save the training module periodically by monitoring a quantity.
-    # MyTrainingModuleCheckpoint = ModelCheckpoint(
-    #     dirpath="runs/faces_points_detector",
-    #     filename="{epoch}-{val_acc:.3f}",
-    #     monitor="val_loss",
-    #     mode="min",
-    #     save_top_k=1,
-    # )
-
     train_dataset = FacesPointsDataset(train_img_dir, train_gt, 'train')
-    train_loader = DataLoader(train_dataset, 32, drop_last=True)
-    training_module = FacesPointsTrainingModule()
-    if not fast_train:
-        trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=32)
-    else:
-        trainer = pl.Trainer(accelerator='cpu', devices=0, max_epochs=1)
     
-    trainer.fit(training_module, train_loader, val_dataloaders=val_loader)
+    training_module = FacesPointsTrainingModule(False)
+    if not fast_train:
+        train_loader = DataLoader(train_dataset, 32, drop_last=True)
+        trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=64)
+    else:
+        train_loader = DataLoader(train_dataset, 1)
+        trainer = pl.Trainer(accelerator='cpu', devices=0, max_epochs=1, fast_dev_run=True)
+    
+    trainer.fit(training_module, train_loader, val_loader)
     
     return training_module.model
 
@@ -297,4 +349,5 @@ def detect(model_filename, test_img_dir):
 
 
 if __name__ == '__main__':
-    train_detector()
+    #train_detector()
+    pass
