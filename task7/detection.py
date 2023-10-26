@@ -9,6 +9,7 @@ import pandas as pd
 import os
 import torchvision
 from PIL import Image
+import albumentations as A
 import pytorch_lightning as pl
 
 
@@ -74,6 +75,25 @@ class FacesPointsDataset(Dataset):
     def __len__(self):
         return len(self.items)
 
+    def swap_axes(self, tensor, ax1, ax2):
+        x = tensor[:, 1].clone()
+        y = tensor[:, 0].clone()
+        tensor[:, 0] = x
+        tensor[:, 1] = y
+
+    def get_label_xy_format(self, label):
+        label = label.clone()
+        label = label.reshape(14, 2)
+        # swap_axes(label, 0, 1)
+        # label[:, 0], label[:, 1] = label[:, 1], label[:, 0].clone()
+        return label
+
+    def get_label_original_format(self, label_xy):
+        label = label_xy.clone()
+        # swap_axes(label, 0, 1)
+        label = label.reshape(28)
+        # print(label.shape)
+        return label
 
     def transform_labels(self, labels, x_scale, y_scale):
         '''
@@ -87,8 +107,9 @@ class FacesPointsDataset(Dataset):
             else:
                 scale = y_scale
             transformed[i] = int(transformed[i]*scale)
-            # transformed = self.transform()
         return transformed
+
+
 
     def __getitem__(self, index):
         filename, labels = self.items[index]
@@ -97,15 +118,26 @@ class FacesPointsDataset(Dataset):
         image = Image.open(img_path).convert("RGB")
         image = np.array(image).astype(np.float32)
         
+
+
         ## augmentation
         if self.transform:
-            image = self.transform(image=image)["image"]
-        
+            if labels is not None:
+                keypoints = self.get_label_xy_format(labels)
+                transformed = self.transform(image=image, keypoints=keypoints) #["image"]
+                image = transformed['image']
+                labels = torch.Tensor(transformed['keypoints'])            
+                labels = self.get_label_original_format(labels)
+            else:
+                image = self.transform(image=image)['image']
+
+        x_scale = 100/image.shape[1]
+        y_scale = 100/image.shape[0]
+
         ## to Tensor
         x = torch.from_numpy(image).permute(2, 0, 1)
         # print(image.shape)
-        x_scale = 100/image.shape[1]
-        y_scale = 100/image.shape[0]
+
         x = torchvision.transforms.functional.resize(x, (100,100), antialias=True)
         if labels is not None:
             labels = self.transform_labels(labels, x_scale, y_scale)
@@ -154,20 +186,21 @@ class FacesPointsDetector(torch.nn.Module):
 
         self.layers = nn.Sequential(
             DetectorBlock(3, 64, 7, True),
+            # DetectorBlock(64, 64, 7, True),
             DetectorBlock(64, 128, 5, True),
+            # DetectorBlock(128, 128, 5, True),
             DetectorBlock(128, 256, 3, True),
-            DetectorBlock(256, 512, 3, True),
+            # DetectorBlock(256, 256, 3, True),
             Flattener(),
-            # nn.LazyLinear(out_features=256),
-            # nn.BatchNorm1d(256),
-            # nn.ReLU(),
-            # nn.LazyLinear(out_features=512),
-            # nn.BatchNorm1d(512),
-            # nn.ReLU(),
+            nn.LazyLinear(out_features=256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.LazyLinear(out_features=512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
             nn.LazyLinear(out_features=128),
             nn.BatchNorm1d(128),
             nn.ReLU(),
-            # nn.Dropout(p=0.1),
             nn.LazyLinear(out_features=28)
         )
 
@@ -249,22 +282,23 @@ class FacesPointsTrainingModule(pl.LightningModule):
 
     def configure_optimizers(self):
         """Define optimizers and LR schedulers."""
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=5e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-2) #3, weight_decay=5e-4
 
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer,
-            step_size = 15,
-            gamma = 1,
-            verbose = True
-        )
-        # torch.optim.lr_scheduler.ReduceLROnPlateau(
+        # lr_scheduler = torch.optim.lr_scheduler.StepLR(
         #     optimizer,
-        #     mode="min",
-        #     factor=0.2,
-        #     patience=5,
-        #     verbose=True,
-        #     # eps = 1e-1,
+        #     step_size = 15,
+        #     gamma = 1,
+        #     verbose = True
         # )
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.2,
+            patience=3,
+            verbose=True,
+            threshold=1e-2,
+        )
+
         lr_dict = {
             # The scheduler instance
             "scheduler": lr_scheduler,
@@ -314,7 +348,17 @@ def train_detector(train_gt, train_img_dir, fast_train=True, val_loader = None):
     изображений.
     
     '''
-    train_dataset = FacesPointsDataset(train_img_dir, train_gt, 'train')
+    # MyTransform = A.Compose(
+    # [
+    #     # A.RandomResizedCrop(width=90, height=90, p=0.5),
+    #     A.Rotate(limit=70),
+    #     # A.HorizontalFlip(p=0.5),
+    #     A.RandomBrightnessContrast(p=0.5), #brightness_limit=0.3, contrast_limit=0.3,
+    #     A.ShiftScaleRotate(p=0.5)
+    # ], 
+    #     keypoint_params = A.KeypointParams(format = 'xy', remove_invisible=False) 
+    # )
+    train_dataset = FacesPointsDataset(train_img_dir, train_gt, 'train', transform=None)
     
     training_module = FacesPointsTrainingModule(False)
     if not fast_train:
