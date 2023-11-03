@@ -203,10 +203,12 @@ class CategoricalCrossentropy(Loss):
                 d - number of units
         """
         # your code here \/
-        # res = np.sum()
-        # target_indices =
-        
-        return #-np.mean(np.log(y_pred))
+        target_indices = np.argmax(y_gt, axis=1)
+        n = target_indices.shape[0]
+        probs = y_pred[(np.arange(n), target_indices)]
+        # print(probs)
+        loss = -np.mean((np.log(probs + eps)))[None]
+        return loss
         # your code here /\
 
     def gradient_impl(self, y_gt, y_pred):
@@ -220,7 +222,12 @@ class CategoricalCrossentropy(Loss):
                 d - number of units
         """
         # your code here \/
-        return ...
+        target_indices = np.argmax(y_gt, axis=1)
+        dprediction = y_gt.copy()
+        n = y_pred.shape[0]
+        dprediction /= -(y_pred + eps)
+        dprediction = dprediction/n
+        return dprediction
         # your code here /\
 
 
@@ -228,20 +235,27 @@ class CategoricalCrossentropy(Loss):
 def train_mnist_model(x_train, y_train, x_valid, y_valid):
     # your code here \/
     # 1) Create a Model
-    model = ...
+    lr = 1e-3
+    momentum = 0.1
+    model = Model(CategoricalCrossentropy(), SGDMomentum(lr, momentum))
 
     # 2) Add layers to the model
     #   (don't forget to specify the input shape for the first layer)
-    model.add(...)
-    model.add(...)
-    ...
-    model.add(...)
-    model.add(...)
+    
+    model.add(Dense(512, (784,)))
+    model.add(ReLU(512))
+    model.add(Dense(512))
+    model.add(ReLU(512))
+    # ...
+    model.add(Dense(1024))
+    model.add(ReLU(1024))
+    model.add(Dense(10))
+    model.add(Softmax(10))
 
     print(model)
 
     # 3) Train and validate the model using the provided data
-    model.fit(...)
+    model.fit(x_train=x_train, y_train=y_train, batch_size=16,epochs=5, x_valid=x_valid, y_valid=y_valid)
 
     # your code here /\
     return model
@@ -288,7 +302,29 @@ def convolve_numpy(inputs, kernels, padding):
             (oh, ow) - output image shape
     """
     # your code here \/
-    return ...
+
+    kernels = kernels[...,::-1,::-1]
+    
+    di = kernels.shape[-2]
+    dj = kernels.shape[-1]
+
+    if padding != 0:
+        inputs = np.pad(inputs, [[0,0],[0,0],[padding, padding],[padding, padding]])
+    # if padding == 1:
+    #     inputs = np.pad(inputs, [[0,0],[0,0],[(di-1)//2,(di-1)//2],[(dj-1)//2,(dj-1)//2]])
+    # elif padding == 2:
+    #     inputs = np.pad(inputs, [[0,0],[0,0],[di-1,di-1],[dj-1,dj-1]])
+
+    ext_img = inputs[:,None,...]
+    ext_kernel = kernels[None,...]
+    res = np.zeros((inputs.shape[0],kernels.shape[0], inputs.shape[-2]- kernels.shape[-2] + 1,inputs.shape[-1] - kernels.shape[-1] + 1))
+
+    for i in range(res.shape[-2]):
+        for j in range(res.shape[-1]):
+            i_input = i# + di//2
+            j_input = j# + dj//2
+            res[..., i,j] = ext_img[...,i_input:i_input+di,j_input:j_input+dj].reshape(inputs.shape[0], -1) @ ext_kernel.reshape(kernels.shape[0],-1).T
+    return res
     # your code here /\
 
 
@@ -337,7 +373,9 @@ class Conv2D(Layer):
                 (h, w) - image shape
         """
         # your code here \/
-        return ...
+        p = (self.kernels.shape[-1] - 1)//2
+        # print('--------', self.biases[...,None,None].shape, '-----------')
+        return convolve(inputs, self.kernels, p) + self.biases[...,None,None]
         # your code here /\
 
     def backward_impl(self, grad_outputs):
@@ -352,7 +390,21 @@ class Conv2D(Layer):
                 (h, w) - image shape
         """
         # your code here \/
-        return ...
+        X_T = np.swapaxes(self.forward_inputs[...,::-1,::-1], 0, 1)
+        dl_dy_T = np.swapaxes(grad_outputs, 0, 1)
+        p = (self.kernels.shape[-1] - 1)//2
+        self.kernels_grad = np.swapaxes(convolve(X_T, dl_dy_T, p), 0, 1)
+
+        self.biases_grad = np.sum(grad_outputs, axis=0) 
+        self.biases_grad = np.sum(self.biases_grad.reshape(self.biases_grad.shape[0], -1), axis = 1)
+        
+        K_T = np.swapaxes(self.kernels[...,::-1,::-1], 0, 1)
+        p = (K_T.shape[-1] - 1)//2
+
+        inputs_grad = convolve(grad_outputs, K_T, p)
+
+
+        return inputs_grad
         # your code here /\
 
 
@@ -389,7 +441,21 @@ class Pooling2D(Layer):
                 (oh, ow) - output image shape
         """
         # your code here \/
-        return ...
+        n,d,ih,iw = inputs.shape
+        p = self.pool_size
+        blocks = inputs.reshape((n, d, -1, p, iw//p, p))
+        blocks = blocks.transpose((0, 1, 2,4,3,5))
+        
+        if self.pool_mode == 'max':
+            maxes = np.max(np.max(blocks, axis=-1, keepdims=True), axis = -2, keepdims=True)
+            pooled = maxes.transpose((0, 1, 2,4,3,5)).reshape(n, d, ih//p, iw//p)
+            self.max_indices = np.argmax(blocks.reshape(-1, p*p), axis=-1)
+        
+        else:
+            block_means = np.sum(blocks, axis=(-1,-2)) / p**2
+            pooled = block_means.reshape(n, d, ih//p, iw//p)
+
+        return pooled
         # your code here /\
 
     def backward_impl(self, grad_outputs):
@@ -404,7 +470,22 @@ class Pooling2D(Layer):
                 (oh, ow) - output image shape
         """
         # your code here \/
-        return ...
+        p = self.pool_size
+        n,d,ih,iw = self.forward_inputs.shape
+        grads_flatten = np.repeat(grad_outputs.reshape(-1, 1), p*p, axis=-1)
+        
+
+        if self.pool_mode == 'max':
+            result_flatten = np.zeros_like(grads_flatten)
+            result_flatten[(np.arange(grads_flatten.shape[0]), self.max_indices)] = grads_flatten[\
+                (np.arange(grads_flatten.shape[0]), self.max_indices)]
+        else:
+            result_flatten = grads_flatten/p**2
+        
+        result = result_flatten.reshape(n,d, -1, iw//p, p, p).transpose(0, 1, 2, 4, 3, 5).\
+            reshape(n,d, ih, iw)
+        
+        return result
         # your code here /\
 
 
@@ -454,11 +535,44 @@ class BatchNorm(Layer):
                 (h, w) - image shape
         """
         # your code here \/
+
+        self.flatten = lambda x, d: x.transpose(1, 0, 2, 3).reshape(d, -1)
+        self.unflatten = lambda flatten, n,d,h,w: flatten.reshape(d, n, h, w).transpose(1, 0, 2, 3)
+
+        n,d,h,w = inputs.shape
+        flatten = inputs.transpose(1, 0, 2, 3).reshape(d, -1)
         if self.is_training:
-            ...
+            
+            if self.running_mean is None:
+                self.running_mean = 0
+            if self.running_var is None:
+                self.running_var = 0
+
+            
+            mu = np.mean(flatten, axis = 1)
+            var = np.var(flatten, axis = 1)
+
+            flatten = (flatten - mu[...,None])/np.sqrt(var[...,None] + eps)
+            
+            self.x_norm = self.unflatten(flatten, n, d, h, w)
+            
+            self.var = var
+            
+
+            self.running_mean = self.running_mean*self.momentum + (1 - self.momentum)*mu #(self.running_mean*self.count + mu)/next_count
+            self.running_var = self.running_var*self.momentum + (1 - self.momentum)*var # (self.running_var*self.count + var)/next_count
+
+            
         else:
-            ...
-        return ...
+            
+            flatten = (flatten - self.running_mean[...,None])/np.sqrt(self.running_var[...,None] + eps)
+            
+        result = flatten.reshape(d, n, h, w)
+        result = self.gamma[...,None, None, None]*result + self.beta[...,None,None,None]
+        
+
+
+        return result.transpose(1, 0, 2, 3)
         # your code here /\
 
     def backward_impl(self, grad_outputs):
@@ -472,7 +586,28 @@ class BatchNorm(Layer):
                 (h, w) - image shape
         """
         # your code here \/
-        return ...
+
+        # n,d,h,w = grad_outputs.shape
+        
+        # grad_outputs = self.flatten(grad_outputs, d)
+
+        self.beta_grad = np.sum(grad_outputs, axis=(0, 2, 3))#.reshape(d) # мб другая ось
+        self.gamma_grad = np.sum(grad_outputs*self.x_norm, axis=(0, 2, 3))
+
+        # dL/dV---------------------------------------
+        dx_norm = grad_outputs*self.gamma[None, ..., None, None]
+
+
+        mult = 1/np.sqrt(self.var[None,:,None,None] + eps)
+        dvar = (dx_norm*self.x_norm).mean(axis=(0, 2, 3))[None,:,None,None]
+        dx1 = dx_norm*mult
+        dx2 = dx_norm.mean(axis=(0, 2, 3))[None,:,None,None]*mult #dvar[None,:,None,None]*2*x_centerd 
+        dx3 = self.x_norm*dvar*mult
+        # print('dx1---------', dx1)
+        # print('dx2----------', dx2,'-----------')
+        # print('dx3----------', dx3,'-----------')
+        dx =  dx1 - dx2 - dx3
+        return dx
         # your code here /\
 
 
@@ -494,7 +629,7 @@ class Flatten(Layer):
                 (h, w) - image shape
         """
         # your code here \/
-        return ...
+        return inputs.reshape(inputs.shape[0], -1)
         # your code here /\
 
     def backward_impl(self, grad_outputs):
@@ -508,7 +643,8 @@ class Flatten(Layer):
                 (h, w) - input image shape
         """
         # your code here \/
-        return ...
+        n,d,h,w = self.forward_inputs.shape
+        return grad_outputs.reshape(n,d,h,w)
         # your code here /\
 
 
@@ -529,11 +665,14 @@ class Dropout(Layer):
                 ... - arbitrary shape (the same for input and output)
         """
         # your code here \/
+        inputs = inputs.copy()
         if self.is_training:
-            ...
+            rand = np.random.uniform(size=inputs.shape)
+            self.forward_mask = rand < self.p
+            inputs[self.forward_mask] = 0
         else:
-            ...
-        return ...
+            inputs[self.forward_mask] *= (1-self.p)
+        return inputs
         # your code here /\
 
     def backward_impl(self, grad_outputs):
@@ -546,7 +685,9 @@ class Dropout(Layer):
                 ... - arbitrary shape (the same for input and output)
         """
         # your code here \/
-        return ...
+        grad_outputs = grad_outputs.copy()
+        grad_outputs[self.forward_mask] = 0
+        return grad_outputs
         # your code here /\
 
 
@@ -554,20 +695,47 @@ class Dropout(Layer):
 def train_cifar10_model(x_train, y_train, x_valid, y_valid):
     # your code here \/
     # 1) Create a Model
-    model = ...
+    loss = CategoricalCrossentropy()
+    optim = SGDMomentum(1e-3, 0.1)
+    model = Model(loss, optim)
 
     # 2) Add layers to the model
     #   (don't forget to specify the input shape for the first layer)
-    model.add(...)
-    model.add(...)
-    ...
-    model.add(...)
-    model.add(...)
+    model.add(Conv2D(kernel_size=3, input_shape=(3,32,32), output_channels=32))
+    model.add(ReLU())
+    model.add(BatchNorm())
+    model.add(Dropout(0.2))
+
+
+    model.add(Conv2D(kernel_size=3, output_channels=64))
+    model.add(ReLU())
+    model.add(BatchNorm())
+    model.add(Pooling2D(2))
+
+    model.add(Conv2D(kernel_size=3, output_channels=128))
+    model.add(ReLU())
+    model.add(BatchNorm())
+    model.add(Pooling2D(2))
+
+    model.add(Conv2D(kernel_size=3, output_channels=64))
+    model.add(ReLU())
+    model.add(BatchNorm())
+    model.add(Pooling2D(4))
+    model.add(Dropout(0.2))
+
+    model.add(Flatten())
+    model.add(Dense(256))
+    model.add(ReLU())
+    model.add(Dropout(0.1))
+    model.add(Dense(10))
+    model.add(Softmax(10))
+
+
 
     print(model)
 
     # 3) Train and validate the model using the provided data
-    model.fit(...)
+    model.fit(x_train=x_train, y_train=y_train, batch_size = 16, epochs = 10, x_valid=x_valid, y_valid=y_valid)
 
     # your code here /\
     return model
