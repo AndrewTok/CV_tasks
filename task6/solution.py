@@ -255,7 +255,7 @@ def train_mnist_model(x_train, y_train, x_valid, y_valid):
     print(model)
 
     # 3) Train and validate the model using the provided data
-    model.fit(x_train=x_train, y_train=y_train, batch_size=16,epochs=5, x_valid=x_valid, y_valid=y_valid)
+    model.fit(x_train=x_train, y_train=y_train, batch_size=16,epochs=1, x_valid=x_valid, y_valid=y_valid)
 
     # your code here /\
     return model
@@ -447,13 +447,14 @@ class Pooling2D(Layer):
         blocks = blocks.transpose((0, 1, 2,4,3,5))
         
         if self.pool_mode == 'max':
-            maxes = np.max(np.max(blocks, axis=-1, keepdims=True), axis = -2, keepdims=True)
-            pooled = maxes.transpose((0, 1, 2,4,3,5)).reshape(n, d, ih//p, iw//p)
+            # maxes = np.max(np.max(blocks, axis=-1, keepdims=True), axis = -2, keepdims=True)
+            # pooled = maxes.transpose((0, 1, 2,4,3,5)).reshape(n, d, ih//p, iw//p)
+            pooled = np.max(blocks, axis=(-1, -2))
             self.max_indices = np.argmax(blocks.reshape(-1, p*p), axis=-1)
         
         else:
-            block_means = np.sum(blocks, axis=(-1,-2)) / p**2
-            pooled = block_means.reshape(n, d, ih//p, iw//p)
+            pooled = np.mean(blocks, axis=(-1,-2))# / p**2
+            # pooled = block_means.reshape(n, d, ih//p, iw//p)
 
         return pooled
         # your code here /\
@@ -536,11 +537,12 @@ class BatchNorm(Layer):
         """
         # your code here \/
 
-        self.flatten = lambda x, d: x.transpose(1, 0, 2, 3).reshape(d, -1)
-        self.unflatten = lambda flatten, n,d,h,w: flatten.reshape(d, n, h, w).transpose(1, 0, 2, 3)
+        # self.flatten = lambda x, d: x.transpose(1, 0, 2, 3).reshape(d, -1)
+        # self.unflatten = lambda flatten, n,d,h,w: flatten.reshape(d, n, h, w).transpose(1, 0, 2, 3)
 
-        n,d,h,w = inputs.shape
-        flatten = inputs.transpose(1, 0, 2, 3).reshape(d, -1)
+        # n,d,h,w = inputs.shape
+        # flatten = inputs.transpose(1, 0, 2, 3).reshape(d, -1)
+        result = inputs.copy()
         if self.is_training:
             
             if self.running_mean is None:
@@ -549,12 +551,12 @@ class BatchNorm(Layer):
                 self.running_var = 0
 
             
-            mu = np.mean(flatten, axis = 1)
-            var = np.var(flatten, axis = 1)
+            mu = np.mean(inputs, axis = (0, 2, 3))
+            var = np.var(inputs, axis = (0, 2, 3))
 
-            flatten = (flatten - mu[...,None])/np.sqrt(var[...,None] + eps)
+            result = (result - mu[None,...,None,None])/np.sqrt(var[None,...,None,None] + eps)
             
-            self.x_norm = self.unflatten(flatten, n, d, h, w)
+            self.x_norm = result #self.unflatten(flatten, n, d, h, w)
             
             self.var = var
             
@@ -565,14 +567,13 @@ class BatchNorm(Layer):
             
         else:
             
-            flatten = (flatten - self.running_mean[...,None])/np.sqrt(self.running_var[...,None] + eps)
+            result = (inputs - self.running_mean[None,...,None,None])/np.sqrt(self.running_var[None,...,None,None] + eps)
             
-        result = flatten.reshape(d, n, h, w)
-        result = self.gamma[...,None, None, None]*result + self.beta[...,None,None,None]
+        result = self.gamma[None, ..., None, None]*result + self.beta[None, ...,None,None]
         
 
 
-        return result.transpose(1, 0, 2, 3)
+        return result
         # your code here /\
 
     def backward_impl(self, grad_outputs):
@@ -705,7 +706,7 @@ def train_cifar10_model(x_train, y_train, x_valid, y_valid):
     model.add(ReLU())
     model.add(BatchNorm())
     model.add(Dropout(0.2))
-
+    model.add(Pooling2D(2))
 
     model.add(Conv2D(kernel_size=3, output_channels=64))
     model.add(ReLU())
@@ -717,14 +718,14 @@ def train_cifar10_model(x_train, y_train, x_valid, y_valid):
     model.add(BatchNorm())
     model.add(Pooling2D(2))
 
-    model.add(Conv2D(kernel_size=3, output_channels=64))
-    model.add(ReLU())
-    model.add(BatchNorm())
-    model.add(Pooling2D(4))
-    model.add(Dropout(0.2))
+    # model.add(Conv2D(kernel_size=3, output_channels=64))
+    # model.add(ReLU())
+    # model.add(BatchNorm())
+    # model.add(Pooling2D(2))
+    # model.add(Dropout(0.2))
 
     model.add(Flatten())
-    model.add(Dense(256))
+    model.add(Dense(128))
     model.add(ReLU())
     model.add(Dropout(0.1))
     model.add(Dense(10))
@@ -735,7 +736,7 @@ def train_cifar10_model(x_train, y_train, x_valid, y_valid):
     print(model)
 
     # 3) Train and validate the model using the provided data
-    model.fit(x_train=x_train, y_train=y_train, batch_size = 16, epochs = 10, x_valid=x_valid, y_valid=y_valid)
+    model.fit(x_train=x_train, y_train=y_train, batch_size = 16, epochs = 6, x_valid=x_valid, y_valid=y_valid)
 
     # your code here /\
     return model

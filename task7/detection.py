@@ -9,55 +9,62 @@ import pandas as pd
 import os
 import torchvision
 from PIL import Image
-import albumentations as A
 import pytorch_lightning as pl
+import albumentations as A
 
-_target_image_size = 224
+_target_image_size = 100
 
 class FacesPointsDataset(Dataset):
 
 
     def __init__(self,
         imgs_path: str,
-        labels_path: str,
+        labels: str,
         mode: str,
-        # fraction = 0.8,
+        fraction = 0.8,
         transform = None,
     ):
         self.imgs_path = imgs_path
-        self.labels_path = labels_path
+        # self.labels_path = labels_path
         self.mode = mode
-        # self.fraction = fraction
+        self.fraction = fraction
         self.transform = transform
 
-        if labels_path is not None:
-            self.labels_df = pd.read_csv(labels_path)
-        else:
-            self.labels_df = None
+        # if labels_path is not None:
+        #     self.labels_df = pd.read_csv(labels_path)
+        # else:
+        #     self.labels_df = None
+
+        self.labels = labels
 
         self.items = []
 
         imgs = os.listdir(imgs_path)
         imgs_num = len(imgs)
-        start = 0
-        end = imgs_num        
-        # print(self.labels_df.head())
-        # if mode == 'train':
-        #     start = 0
-        #     end = int(fraction*imgs_num)
-        # elif mode == 'val':
-        #     start = int(fraction*imgs_num)
-        #     end = imgs_num
-        # else:
-        #     start = 0
-        #     end = imgs_num
+        # start = 0
+        # end = imgs_num        
 
-        for i in range(start, end):
+        permutation = np.random.RandomState(seed=42).permutation(imgs_num)
+
+        # print(self.labels_df.head())
+        if mode == 'train':
+            start = 0
+            end = int(fraction*imgs_num)
+        elif mode == 'val':
+            start = int(fraction*imgs_num)
+            end = imgs_num
+        else:
+            start = 0
+            end = imgs_num
+
+        for j in range(start, end):
             # img = imgs[i]
-            if self.labels_df is not None:
+            i = permutation[j]
+            if self.labels is not None:
                 # print(imgs[i])
                 # print(self.labels_df.loc[i])
-                labels = self.labels_df.loc[self.labels_df['filename'] == imgs[i]][self.labels_df.columns[1:]].values
+                # print(self.labels, i, imgs[i])
+                labels = self.labels[imgs[i]] #labels_df.loc[self.labels_df['filename'] == imgs[i]][self.labels_df.columns[1:]].values
                 labels = torch.from_numpy(labels)
                 
                 if len(labels.shape) > 1:
@@ -133,8 +140,12 @@ class FacesPointsDataset(Dataset):
 
         
 
+
         x_scale = _target_image_size/image.shape[1]
         y_scale = _target_image_size/image.shape[0]
+
+        self.last_x_scale = x_scale
+        self.last_y_scale = y_scale
 
         ## to Tensor
         x = torch.from_numpy(image).permute(2, 0, 1)
@@ -146,18 +157,17 @@ class FacesPointsDataset(Dataset):
 
         return x, labels
 
-
 class DetectorBlock(torch.nn.Module):
 
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, max_pool = True):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, max_pool = True, do_p = 0):
         super().__init__()
         self.max_pool = None
         self.block = nn.Sequential(
             nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size),
             nn.BatchNorm2d(num_features=out_channels),
             nn.ReLU(),
-            #nn.MaxPool2d(kernel_size=2),
+            nn.Dropout(p=do_p),
         )
         if max_pool:
             self.max_pool = nn.MaxPool2d(kernel_size=2)
@@ -177,48 +187,28 @@ class Flattener(nn.Module):
     def forward(self, x):
 
         batch_size, *_ = x.shape
-        # print(batch_size)
         res = x.view(batch_size, -1) # torch.flatten(x) #
         return res
 
 class FacesPointsDetector(torch.nn.Module):
-    # картинку до 224*224
-    # vgg-19 свертки и хвост старый
+    # 23 c другими датасетом
+    do = 0
     def __init__(self):
         super().__init__()
 
         self.layers = nn.Sequential(
-            DetectorBlock(3, 64, 3, False),
-            DetectorBlock(64, 64, 3, True),
-
-            DetectorBlock(64, 128, 3, False),
-            DetectorBlock(128, 128, 3, True),
-
-            DetectorBlock(128, 256, 3, False),
-            DetectorBlock(256, 256, 3, False),
-            DetectorBlock(256, 256, 3, False),
-            DetectorBlock(256, 256, 3, False),
-
-            DetectorBlock(256, 512, 3, False),
-            DetectorBlock(512, 512, 3, False),
-            DetectorBlock(512, 512, 3, False),
-            DetectorBlock(512, 512, 3, True),
-
-            DetectorBlock(512, 512, 3, False),
-            DetectorBlock(512, 512, 3, False),
-            DetectorBlock(512, 512, 3, False),
-            DetectorBlock(512, 512, 3, True),
-
+            DetectorBlock(3, 64, 3, False, self.do),
+            DetectorBlock(64, 64, 3, True, self.do),
+            DetectorBlock(64, 256, 3, False, self.do),
+            DetectorBlock(256, 256, 3, True, self.do),
+            DetectorBlock(256, 512, 3, False, self.do),
+            DetectorBlock(512, 512, 3, True, self.do),
+            # DetectorBlock(512, 512, 3, True,self.do),
             Flattener(),
-            nn.LazyLinear(out_features=256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
             nn.LazyLinear(out_features=512),
             nn.BatchNorm1d(512),
             nn.ReLU(),
-            nn.LazyLinear(out_features=128),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
+            nn.Dropout(self.do),
             nn.LazyLinear(out_features=28)
         )
 
@@ -227,9 +217,25 @@ class FacesPointsDetector(torch.nn.Module):
         return self.layers(x)
 
 
-class FacesPointsTrainingModule(pl.LightningModule):
+
+# deprecated
+class FacePointsDetectorImproved(torch.nn.Module):
+
     def __init__(self):
         super().__init__()
+
+        self.layers = nn.Sequential(
+        )
+
+
+    def forward(self, x):
+        return self.layers(x)
+
+
+class FacesPointsTrainingModule(pl.LightningModule):
+    def __init__(self, enable_logging = False):
+        super().__init__()
+        self.enable_logging = enable_logging
         self.model = FacesPointsDetector()
         self.loss_f =  F.mse_loss
         self.train_loss = []
@@ -240,7 +246,8 @@ class FacesPointsTrainingModule(pl.LightningModule):
         loss = self.loss_f(y_pr, y_gt.float())
 
         metrics = {'loss':loss.detach()}
-        self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True, logger=True)
+        if self.enable_logging:
+            self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True, logger=True)
         self.train_loss.append(loss.detach())  # optional
 
 
@@ -248,39 +255,36 @@ class FacesPointsTrainingModule(pl.LightningModule):
 
     def configure_optimizers(self):
         """Define optimizers and LR schedulers."""
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-2) #3, weight_decay=5e-4
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-2) #, weight_decay=5e-4
+        
+        if self.enable_logging:
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode="min",
+                factor=0.2,
+                patience=5,
+                verbose=True,
+                threshold= 1e-2
+            )
 
-        # lr_scheduler = torch.optim.lr_scheduler.StepLR(
-        #     optimizer,
-        #     step_size = 15,
-        #     gamma = 1,
-        #     verbose = True
-        # )
-        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode="min",
-            factor=0.2,
-            patience=3,
-            verbose=True,
-            threshold=1e-2,
-        )
+            lr_dict = {
+                # The scheduler instance
+                "scheduler": lr_scheduler,
+                # The unit of the scheduler's step size, could also be 'step'.
+                # 'epoch' updates the scheduler on epoch end whereas 'step'
+                # updates it after a optimizer update.
+                "interval": "epoch",
+                # How many epochs/steps should pass between calls to
+                # `scheduler.step()`. 1 corresponds to updating the learning
+                # rate after every epoch/step.
+                "frequency": 1,
+                # Metric to to monitor for schedulers like `ReduceLROnPlateau`
+                "monitor": "loss",
+            }
 
-        lr_dict = {
-            # The scheduler instance
-            "scheduler": lr_scheduler,
-            # The unit of the scheduler's step size, could also be 'step'.
-            # 'epoch' updates the scheduler on epoch end whereas 'step'
-            # updates it after a optimizer update.
-            "interval": "epoch",
-            # How many epochs/steps should pass between calls to
-            # `scheduler.step()`. 1 corresponds to updating the learning
-            # rate after every epoch/step.
-            "frequency": 1,
-            # Metric to to monitor for schedulers like `ReduceLROnPlateau`
-            "monitor": "loss",
-        }
-
-        return [optimizer], [lr_dict]
+            return [optimizer], [lr_dict]
+        else:
+            return optimizer
         # return torch.optim.Adam(self.parameters(), lr=0.001, weight_decay=1e-3)
 
     ## OPTIONAL:
@@ -297,10 +301,11 @@ class FacesPointsTrainingModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y_gt = batch
         y_pr = self.model(x)
-        loss = self.loss_f(y_pr, y_gt.float())*100/_target_image_size # учитываем масштаб в котором смотрится ошибка
+        loss = self.loss_f(y_pr, y_gt.float())
 
         metrics = {'val_loss':loss}
-        self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True, logger=True)
+        if self.enable_logging:
+            self.log_dict(metrics, prog_bar=True, on_step=True, on_epoch=True, logger=True)
 
         pass
 
@@ -324,15 +329,16 @@ def train_detector(train_gt, train_img_dir, fast_train=True, val_loader = None):
     ], 
         keypoint_params = A.KeypointParams(format = 'xy', remove_invisible=False) 
     )
-    train_dataset = FacesPointsDataset(train_img_dir, train_gt, 'train', transform=None)
-    
-    training_module = FacesPointsTrainingModule()
+
+    # print('train_gt------', train_gt, '--------')
+    # print('train_img_dir------', train_img_dir, '--------')
+    train_dataset = FacesPointsDataset(train_img_dir, train_gt, fraction=0.9, mode='train', transform=MyTransform)
+    train_loader = DataLoader(train_dataset, 32, drop_last=True)
+    training_module = FacesPointsTrainingModule(not fast_train)
     if not fast_train:
-        train_loader = DataLoader(train_dataset, 8, drop_last=True)
-        trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=64)
+        trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=100)
     else:
-        train_loader = DataLoader(train_dataset, 1)
-        trainer = pl.Trainer(accelerator='cpu', devices=0, max_epochs=1, fast_dev_run=True)
+        trainer = pl.Trainer(accelerator='cpu', devices=1, max_epochs=1, logger=False)
     
     trainer.fit(training_module, train_loader, val_loader)
     
@@ -349,15 +355,40 @@ def detect(model_filename, test_img_dir):
 
     result = {}
 
+    module.eval()
+
     for i in range(len(dataset)):
         img, _ = dataset[i]
-        pred = module[img[None,:]].detach()[0]
+        pred = module(img[None,:]).detach()[0]
+        dataset.transform_labels(pred, 1/dataset.last_x_scale, 1/dataset.last_y_scale)
         result[dataset.items[i][0]] = pred
     
     return result
 
-
+import matplotlib.pyplot as plt
+def vizualize(img, keypoints, transpose = True, to_torch = False):
+    if to_torch:
+        img = torch.from_numpy(img)
+    if transpose:
+        img = img.permute(1, 2, 0)
+    plt.imshow(img.int())
+    for i in range(0, len(keypoints)-1, 2):
+        x = keypoints[i]
+        y = keypoints[i+1]
+        plt.plot(x,y, 'og', markersize=6)
+    plt.show()
 
 if __name__ == '__main__':
-    #train_detector()
+    model_pth = 'lightning_logs\\version_77\\checkpoints\\epoch=99-step=15000.ckpt'
+    img_dir = 'public_tests\\00_test_img_input\\test\\images'
+    prediction = detect(model_pth, img_dir)
+    
+    test_image = 'public_tests\\00_test_img_input\\test\\images\\00000.jpg'
+
+    ## read image
+    image = Image.open(test_image).convert("RGB")
+    image = np.array(image).astype(np.float32)
+
+    vizualize(image, prediction['00000.jpg'], to_torch=True)
+
     pass
