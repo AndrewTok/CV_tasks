@@ -15,17 +15,17 @@ def get_cls_model(input_shape):
     h, w, c = input_shape
 
     model = Sequential(
-        Conv2d(in_channels=c, out_channels=32, kernel_size=3),
+        Conv2d(in_channels=c, out_channels=32, kernel_size=3, padding='same'),
         BatchNorm2d(32),
         ReLU(),
         MaxPool2d(kernel_size=2),
 
-        Conv2d(in_channels=32, out_channels=64, kernel_size=3),
+        Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding='same'),
         BatchNorm2d(64),
         ReLU(),
         MaxPool2d(kernel_size=2),
 
-        Conv2d(in_channels=64, out_channels=128, kernel_size=3),
+        Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding='same'),
         BatchNorm2d(128),
         ReLU(),
 
@@ -59,10 +59,10 @@ def fit_cls_model(X, y):
 
     train_transform = A.Compose(
         [
-            A.Rotate(limit=70, p=0.3),
+            # A.Rotate(limit=70, p=0.3),
             A.HorizontalFlip(p = 0.3),
             # A.Normalize(),
-            ToTensorV2()
+            # ToTensorV2()
         ]
     )
 
@@ -73,7 +73,8 @@ def fit_cls_model(X, y):
     #     ]
     # )
 
-
+    X = X.numpy()
+    y = y.numpy()
     class SimpleDataset(torch.utils.data.Dataset):
         def __init__(self, X, y, transforms):
             super().__init__()
@@ -87,7 +88,7 @@ def fit_cls_model(X, y):
                 x = self.transforms(image = self.X[index])['image']
             else:
                 x = self.X[index]
-            return x, self.y[index]
+            return torch.from_numpy(x), self.y[index]
 
         def __len__(self):
             return self.X.shape[0]
@@ -97,10 +98,10 @@ def fit_cls_model(X, y):
     # y_train, y_test = from_numpy(y_train), from_numpy(y_test)
 
 
-    train_set = SimpleDataset(X, y, transforms=None)
+    train_set = SimpleDataset(X, y, transforms=train_transform)
     # test_set = SimpleDataset(X_test, y_test, test_transform)
 
-    epochs_num = 2
+    epochs_num = 4
     batch_size = 16
 
 
@@ -167,7 +168,9 @@ def get_detection_model(cls_model):
     # your code here \/
     from torch.nn import Sequential, Conv2d, Sigmoid
 
-    final_kernal_size = (6, 21)
+
+    final_kernal_size = (10, 25)
+    # print(cls_model)
     detection_model = Sequential(
         cls_model[0], #conv
         cls_model[1], #bn
@@ -187,8 +190,8 @@ def get_detection_model(cls_model):
         Sigmoid()
     )
 
-    detection_model[-2].weight = cls_model[-2].weight.reshape(2, 128, final_kernal_size[0], final_kernal_size[1])
-    detection_model[-2].bias = cls_model[-2].bias
+    detection_model[-2].weight.data = cls_model[-2].weight.data.reshape(2, 128, final_kernal_size[0], final_kernal_size[1])
+    detection_model[-2].bias.data = cls_model[-2].bias.data
 
 
     return detection_model
@@ -207,12 +210,12 @@ def get_detections(detection_model, dictionary_of_images):
     """
     # your code here \/
     import numpy as np
-
+    import matplotlib.pyplot as plt
     def receptive_bb(out_x, out_y):
-        start_x = out_x*4
-        end_x = np.cilp(start_x + 40, 0, 220)
+        start_x = np.clip((out_x)*4 + 20, 0, 220) # - 40
+        end_x = np.clip(start_x + 40, 0, 220)
 
-        start_y = out_y*4
+        start_y = np.clip((out_y)*4 - 50, 0, 220)
         end_y = np.clip(start_y + 100, 0, 370)
 
         n_rows = end_x - start_x
@@ -222,35 +225,33 @@ def get_detections(detection_model, dictionary_of_images):
     detection_model.eval()
     detections = {}
 
+    detection_model.eval()
 
-    for filename in dictionary_of_images.key():
+    for filename in dictionary_of_images.keys():
         img = dictionary_of_images[filename]
         pad_x = 220 - img.shape[0]
         pad_y = 370 - img.shape[1]
-        padded = np.pad(img, ((0, pad_x), (0, pad_y)))
-        pred = detection_model(padded[None, ...])
+        padded = torch.from_numpy(np.pad(img, ((0, pad_x), (0, pad_y))))
+        pred = detection_model(padded[None, None, ...])
         flatten_pred = torch.flatten(pred, start_dim=2, end_dim=3)
         indices = np.arange(flatten_pred.shape[-1])
 
         detected_mask = np.argmax(flatten_pred.detach().numpy(), axis = 1).flatten()
         detected_ids = indices[detected_mask == 1]
-        confidences = flatten_pred.detach().numpy()[detected_mask == 1][:, 1, :]
+        confidences = flatten_pred.detach().numpy()[..., detected_mask == 1][:, 1, :]
 
-        out_x = indices//100
-        out_y = indices - out_x*100
+        out_x = detected_ids//100
+        out_y = detected_ids - out_x*100
         rows, cols, n_rows, n_cols = receptive_bb(out_x, out_y)
 
-        detects = np.array(5*len(detected_ids))
+        detects = np.zeros(5*len(detected_ids))
         detects[0::5] = rows
         detects[1::5] = cols
         detects[2::5] = n_rows
         detects[3::5] = n_cols
         detects[4::5] = confidences
 
-        detections[filename] = detects
-
-
-
+        detections[filename] = detects.reshape(-1, 5)
 
     return detections
     # your code here /\
@@ -264,7 +265,25 @@ def calc_iou(first_bbox, second_bbox):
     :return: iou measure for two given bboxes
     """
     # your code here \/
-    return 1
+    import numpy as np
+    first_start_row = first_bbox[0]
+    first_start_col = first_bbox[1]
+    first_end_row = first_bbox[0]+first_bbox[2]
+    first_end_col = first_bbox[1]+first_bbox[3]
+
+    second_start_row = second_bbox[0]
+    second_start_col = second_bbox[1]
+    second_end_row = second_bbox[0]+second_bbox[2]
+    second_end_col = second_bbox[1]+second_bbox[3]
+
+    overlap_h = max(0, min(first_end_row, second_end_row) - max(first_start_row, second_start_row))
+    overlap_w = max(0, min(first_end_col, second_end_col) - max(first_start_col, second_start_col))
+
+    ov_area = overlap_w*overlap_h
+
+    un_area = first_bbox[2]*first_bbox[3] + second_bbox[2]*second_bbox[3] - ov_area
+
+    return ov_area/un_area
     # your code here /\
 
 
@@ -280,12 +299,103 @@ def calc_auc(pred_bboxes, gt_bboxes):
     :return: auc measure for given detections and gt
     """
     # your code here \/
-    return 1
+    import numpy as np
+    iou_threshold = 0.5
+    global_tps = []
+    global_fps = []
+
+    total_gts = 0
+
+    for key in gt_bboxes.keys():
+        tps = []
+        fps = []
+        pred_bbs = pred_bboxes[key][np.argsort(pred_bboxes[key][:,-1])[::-1]]
+        gt_bbs = gt_bboxes[key]
+        total_gts += len(gt_bbs)
+        for i in range(pred_bbs.shape[0]):
+            pred_bb = pred_bbs[i][:-1]
+            # print('pred_bb', pred_bb)
+            best_iou = -1
+            best_bb = -1
+            for j in range(len(gt_bbs)):
+                gt_bb = gt_bbs[j]
+                iou = calc_iou(pred_bb, gt_bb)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_bb = j
+
+                # print()
+            if best_iou >= iou_threshold:
+                # print(best_iou)
+                tps.append((i, best_bb, best_iou, pred_bbs[i][-1]))
+                del gt_bbs[best_bb]
+
+            else:
+                fps.append((i, best_bb, best_iou, pred_bbs[i][-1]))
+
+        global_tps.extend(tps)
+        global_fps.extend(fps)
+        # print(global_tps)
+        # print(global_fps)
+
+    all_detections = []
+    all_detections.extend(global_tps)
+    all_detections.extend(global_fps)
+
+    all_detections.sort(key=lambda x: x[-1])
+    global_tps.sort(key=lambda x: x[-1])
+
+
+    # all_detections = np.array(all_detections)
+    # print(global_tps)
+    global_tps = np.array(global_tps)
+    # print(global_tps)
+    all_detections = np.array(all_detections)
+    def get_precision_recall(tps, all_detections, gt_count, threshold):
+        tp = np.sum(tps[:,-1] >= threshold)
+        # print(tp, threshold)
+        # print(tps)
+
+        all_detected_thr = np.sum(all_detections[:,-1] >= threshold)
+        # print(all_detected_thr, threshold)
+        # print(all_detections)
+        # print(gt_count)
+
+
+        if tp == 0 and all_detected_thr == 0:
+            prec = 1
+        else:
+            prec = tp / all_detected_thr
+
+        if tp == 0 and gt_count == 0:
+            rec = 1
+        else:
+            rec = tp / gt_count
+        return prec, rec
+
+
+    thresholds = np.unique(all_detections[:, -1])
+    thresholds = np.insert(thresholds, 0, 2)
+    thresholds.sort()
+    # print(thresholds)
+
+    # print(thresholds)
+
+    precs = []
+    recs = []
+    for t in thresholds:
+        p, r = get_precision_recall(global_tps, all_detections, total_gts, t)
+        precs.append(p)
+        recs.append(r)
+
+    auc = np.abs(np.trapz(precs, recs))
+
+    return auc
     # your code here /\
 
 
 # =============================== 7 NMS ========================================
-def nms(detections_dictionary, iou_thr):
+def nms(detections_dictionary, iou_thr=0.5):
     """
     :param detections_dictionary: dict of bboxes in format {filename: detections}
         detections is a N x 5 array, where N is number of detections. Each
@@ -296,5 +406,23 @@ def nms(detections_dictionary, iou_thr):
         are deleted
     """
     # your code here \/
-    return {}
+    import numpy as np
+    filtered = {}
+
+    def coincides_with_processed(detection, filtered_detections, threshold):
+        for filtered in filtered_detections:
+            if calc_iou(filtered, detection) >= threshold:
+                return True
+        return False
+
+    for key in detections_dictionary.keys():
+        arr = np.array(detections_dictionary[key])
+        detections = arr[np.argsort(arr[:,-1])[::-1]]
+        filtered_detections = []
+        for bb_i in range(detections.shape[0]):
+            curr_detection = detections[bb_i]
+            if not coincides_with_processed(curr_detection, filtered_detections, iou_thr):
+                filtered_detections.append(curr_detection)
+        filtered[key] = filtered_detections
+    return filtered
     # your code here /\
