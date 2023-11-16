@@ -15,23 +15,23 @@ def get_cls_model(input_shape):
     h, w, c = input_shape
 
     model = Sequential(
-        Conv2d(in_channels=c, out_channels=32, kernel_size=3, padding='same'),
+        Conv2d(in_channels=c, out_channels=32, kernel_size=5, padding='same'),
         BatchNorm2d(32),
         ReLU(),
         MaxPool2d(kernel_size=2),
 
-        Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding='same'),
+        Conv2d(in_channels=32, out_channels=64, kernel_size=5, padding='same'),
         BatchNorm2d(64),
         ReLU(),
         MaxPool2d(kernel_size=2),
 
-        Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding='same'),
+        Conv2d(in_channels=64, out_channels=128, kernel_size=5, padding='same'),
         BatchNorm2d(128),
         ReLU(),
 
         Flatten(),
         LazyLinear(2),
-        Softmax(dim=1)
+        Softmax(dim=1),
     )
 
 
@@ -59,10 +59,14 @@ def fit_cls_model(X, y):
 
     train_transform = A.Compose(
         [
-            # A.Rotate(limit=70, p=0.3),
-            A.HorizontalFlip(p = 0.3),
-            # A.Normalize(),
-            # ToTensorV2()
+            A.ToFloat(),
+            A.Rotate(limit=15, p=0.5),
+            A.HorizontalFlip(p = 0.5),
+            # A.Blur(blur_limit=2, p = 0.1),
+            #
+            A.RandomBrightnessContrast(p = 0.5),
+            # A.Normalize(mean = 0.5, std=0.224),
+            ToTensorV2()
         ]
     )
 
@@ -73,7 +77,7 @@ def fit_cls_model(X, y):
     #     ]
     # )
 
-    X = X.numpy()
+    X = X.numpy().transpose(0, 2, 3, 1)
     y = y.numpy()
     class SimpleDataset(torch.utils.data.Dataset):
         def __init__(self, X, y, transforms):
@@ -87,8 +91,8 @@ def fit_cls_model(X, y):
             if self.transforms is not None:
                 x = self.transforms(image = self.X[index])['image']
             else:
-                x = self.X[index]
-            return torch.from_numpy(x), self.y[index]
+                x = torch.from_numpy(self.X[index])
+            return x, self.y[index]
 
         def __len__(self):
             return self.X.shape[0]
@@ -101,7 +105,7 @@ def fit_cls_model(X, y):
     train_set = SimpleDataset(X, y, transforms=train_transform)
     # test_set = SimpleDataset(X_test, y_test, test_transform)
 
-    epochs_num = 4
+    epochs_num = 8
     batch_size = 16
 
 
@@ -117,7 +121,7 @@ def fit_cls_model(X, y):
             super().__init__()
             self.model = model
             self.lr = 1e-3
-            self.weight_decay = 1e-8
+            self.weight_decay = 1e-5
             self.optimizer = torch.optim.AdamW(params=self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
             self.loss_f = F.nll_loss
             self.train_acc = []
@@ -166,7 +170,7 @@ def get_detection_model(cls_model):
              model
     """
     # your code here \/
-    from torch.nn import Sequential, Conv2d, Sigmoid
+    from torch.nn import Sequential, Conv2d, Tanh, Sigmoid, Softmax2d
 
 
     final_kernal_size = (10, 25)
@@ -187,10 +191,11 @@ def get_detection_model(cls_model):
         cls_model[10], #relu
 
         Conv2d(in_channels=cls_model[8].out_channels, out_channels=2, kernel_size=final_kernal_size),
-        Sigmoid()
+        Softmax2d(),
+        # Sigmoid(),
     )
 
-    detection_model[-2].weight.data = cls_model[-2].weight.data.reshape(2, 128, final_kernal_size[0], final_kernal_size[1])
+    detection_model[-2].weight.data = cls_model[-2].weight.data.reshape(2, cls_model[8].out_channels, final_kernal_size[0], final_kernal_size[1])
     detection_model[-2].bias.data = cls_model[-2].bias.data
 
 
@@ -211,11 +216,15 @@ def get_detections(detection_model, dictionary_of_images):
     # your code here \/
     import numpy as np
     import matplotlib.pyplot as plt
+    import albumentations as A
+    from albumentations.augmentations.geometric.transforms import PadIfNeeded
+    from albumentations.pytorch import ToTensorV2
+    import cv2
     def receptive_bb(out_x, out_y):
         start_x = np.clip((out_x)*4 + 20, 0, 220) # - 40
         end_x = np.clip(start_x + 40, 0, 220)
 
-        start_y = np.clip((out_y)*4 - 50, 0, 220)
+        start_y = np.clip((out_y)*4 - 50, 0, 370)
         end_y = np.clip(start_y + 100, 0, 370)
 
         n_rows = end_x - start_x
@@ -227,12 +236,23 @@ def get_detections(detection_model, dictionary_of_images):
 
     detection_model.eval()
 
+    transform = A.Compose(
+        [
+            A.ToFloat(),
+            A.PadIfNeeded(min_height=220, min_width=370, position=PadIfNeeded.PositionType.TOP_LEFT, \
+                          border_mode=cv2.BORDER_CONSTANT, value = 0),
+            ToTensorV2(),
+        ]
+    )
+
     for filename in dictionary_of_images.keys():
         img = dictionary_of_images[filename]
-        pad_x = 220 - img.shape[0]
-        pad_y = 370 - img.shape[1]
-        padded = torch.from_numpy(np.pad(img, ((0, pad_x), (0, pad_y))))
-        pred = detection_model(padded[None, None, ...])
+        # pad_x = 220 - img.shape[0]
+        # pad_y = 370 - img.shape[1]
+        # padded = torch.from_numpy(np.pad(img, ((0, pad_x), (0, pad_y)))) # mode = 'mean'
+        padded = transform(image = img[...,None])['image']
+
+        pred = detection_model(padded[None,...])
         flatten_pred = torch.flatten(pred, start_dim=2, end_dim=3)
         indices = np.arange(flatten_pred.shape[-1])
 
@@ -309,7 +329,11 @@ def calc_auc(pred_bboxes, gt_bboxes):
     for key in gt_bboxes.keys():
         tps = []
         fps = []
-        pred_bbs = pred_bboxes[key][np.argsort(pred_bboxes[key][:,-1])[::-1]]
+        if  len(pred_bboxes[key].shape) == 1:
+            continue
+        arr = pred_bboxes[key][:,-1]
+        sort_indices = np.argsort(arr)[::-1]
+        pred_bbs = pred_bboxes[key][sort_indices]
         gt_bbs = gt_bboxes[key]
         total_gts += len(gt_bbs)
         for i in range(pred_bbs.shape[0]):
@@ -423,6 +447,6 @@ def nms(detections_dictionary, iou_thr=0.5):
             curr_detection = detections[bb_i]
             if not coincides_with_processed(curr_detection, filtered_detections, iou_thr):
                 filtered_detections.append(curr_detection)
-        filtered[key] = filtered_detections
+        filtered[key] = np.array(filtered_detections)
     return filtered
     # your code here /\
