@@ -15,23 +15,23 @@ def get_cls_model(input_shape):
     h, w, c = input_shape
 
     model = Sequential(
-        Conv2d(in_channels=c, out_channels=32, kernel_size=5, padding='same'),
+        Conv2d(in_channels=c, out_channels=32, kernel_size=3, padding='same'),
         BatchNorm2d(32),
         ReLU(),
         MaxPool2d(kernel_size=2),
 
-        Conv2d(in_channels=32, out_channels=64, kernel_size=5, padding='same'),
+        Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding='same'),
         BatchNorm2d(64),
         ReLU(),
         MaxPool2d(kernel_size=2),
 
-        Conv2d(in_channels=64, out_channels=128, kernel_size=5, padding='same'),
+        Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding='same'),
         BatchNorm2d(128),
         ReLU(),
 
         Flatten(),
         LazyLinear(2),
-        Softmax(dim=1),
+        # Softmax(dim=1),
     )
 
 
@@ -60,11 +60,11 @@ def fit_cls_model(X, y):
     train_transform = A.Compose(
         [
             A.ToFloat(),
-            A.Rotate(limit=15, p=0.5),
-            A.HorizontalFlip(p = 0.5),
+            A.Rotate(limit=5, p=0.1),
+            A.HorizontalFlip(p = 0.1),
             # A.Blur(blur_limit=2, p = 0.1),
             #
-            A.RandomBrightnessContrast(p = 0.5),
+            # A.RandomBrightnessContrast(p = 0.1),
             # A.Normalize(mean = 0.5, std=0.224),
             ToTensorV2()
         ]
@@ -105,14 +105,14 @@ def fit_cls_model(X, y):
     train_set = SimpleDataset(X, y, transforms=train_transform)
     # test_set = SimpleDataset(X_test, y_test, test_transform)
 
-    epochs_num = 8
-    batch_size = 16
+    epochs_num = 6
+    batch_size = 32
 
 
 
     # model.train()
 
-    train_loader = torch.utils.data.DataLoader(dataset=train_set, batch_size=batch_size, drop_last=True)
+    train_loader = torch.utils.data.DataLoader(dataset=train_set, batch_size=batch_size, drop_last=True, shuffle=True)
     # valid_loader = torch.utils.data.DataLoader(dataset=test_set, batch_size=batch_size, drop_last=True)
 
     class TrainModule(pl.LightningModule):
@@ -122,8 +122,8 @@ def fit_cls_model(X, y):
             self.model = model
             self.lr = 1e-3
             self.weight_decay = 1e-5
-            self.optimizer = torch.optim.AdamW(params=self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-            self.loss_f = F.nll_loss
+            self.optimizer = torch.optim.Adam(params=self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+            self.loss_f = F.cross_entropy #F.nll_loss
             self.train_acc = []
             self.metric = lambda logits, y: torch.sum(logits.argmax(axis=1) == y) / y.shape[0]  # accuracy
 
@@ -195,8 +195,8 @@ def get_detection_model(cls_model):
         # Sigmoid(),
     )
 
-    detection_model[-2].weight.data = cls_model[-2].weight.data.reshape(2, cls_model[8].out_channels, final_kernal_size[0], final_kernal_size[1])
-    detection_model[-2].bias.data = cls_model[-2].bias.data
+    detection_model[-2].weight.data = cls_model[-1].weight.data.reshape(2, cls_model[8].out_channels, final_kernal_size[0], final_kernal_size[1])
+    detection_model[-2].bias.data = cls_model[-1].bias.data
 
 
     return detection_model

@@ -4,3 +4,13 @@
 task7/public_tests/*
 *checkpoints
 *.ckpt
+*.pt
+*.png
+*.jpg
+*.jpeg
+*materials
+*/materials
+*.mp4
+*.avi
+*.mkv
+

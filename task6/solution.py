@@ -706,17 +706,17 @@ def train_cifar10_model(x_train, y_train, x_valid, y_valid):
     model.add(ReLU())
     model.add(BatchNorm())
     model.add(Dropout(0.2))
-    model.add(Pooling2D(2))
+    model.add(Pooling2D(4))
 
     model.add(Conv2D(kernel_size=3, output_channels=64))
     model.add(ReLU())
     model.add(BatchNorm())
     model.add(Pooling2D(2))
 
-    model.add(Conv2D(kernel_size=3, output_channels=128))
-    model.add(ReLU())
-    model.add(BatchNorm())
-    model.add(Pooling2D(2))
+    # model.add(Conv2D(kernel_size=3, output_channels=128))
+    # model.add(ReLU())
+    # model.add(BatchNorm())
+    # model.add(Pooling2D(2))
 
     # model.add(Conv2D(kernel_size=3, output_channels=64))
     # model.add(ReLU())
@@ -736,7 +736,7 @@ def train_cifar10_model(x_train, y_train, x_valid, y_valid):
     print(model)
 
     # 3) Train and validate the model using the provided data
-    model.fit(x_train=x_train, y_train=y_train, batch_size = 16, epochs = 6, x_valid=x_valid, y_valid=y_valid)
+    model.fit(x_train=x_train, y_train=y_train, batch_size = 16, epochs = 7, x_valid=x_valid, y_valid=y_valid)
 
     # your code here /\
     return model

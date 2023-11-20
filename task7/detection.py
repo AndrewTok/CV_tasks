@@ -53,6 +53,9 @@ class FacesPointsDataset(Dataset):
         elif mode == 'val':
             start = int(fraction*imgs_num)
             end = imgs_num
+        elif mode == 'fast_train':
+            start = 0
+            end = 128
         else:
             start = 0
             end = imgs_num
@@ -312,6 +315,26 @@ class FacesPointsTrainingModule(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
+MyTransform = A.Compose(
+[
+    # A.RandomResizedCrop(width=90, height=90, p=0.5),
+    A.Rotate(limit=70, p=0.3),
+    # A.Vert(p=0.3),
+    A.RandomBrightnessContrast(p=0.3), #brightness_limit=0.3, contrast_limit=0.3,
+    # A.ShiftScaleRotate(p=0.3),
+    A.Normalize(),
+], 
+    keypoint_params = A.KeypointParams(format = 'xy', remove_invisible=False) 
+)
+
+
+test_transform = A.Compose(
+[
+    A.Normalize(),
+], 
+    keypoint_params = A.KeypointParams(format = 'xy', remove_invisible=False) 
+)
+
 def train_detector(train_gt, train_img_dir, fast_train=True, val_loader = None):
     '''
     Возвращает словарь размером N, ключи которого — имена файлов, а значения —
@@ -319,26 +342,22 @@ def train_detector(train_gt, train_img_dir, fast_train=True, val_loader = None):
     изображений.
     
     '''
-    MyTransform = A.Compose(
-    [
-        # A.RandomResizedCrop(width=90, height=90, p=0.5),
-        A.Rotate(limit=70),
-        # A.HorizontalFlip(p=0.5),
-        A.RandomBrightnessContrast(p=0.5), #brightness_limit=0.3, contrast_limit=0.3,
-        A.ShiftScaleRotate(p=0.5)
-    ], 
-        keypoint_params = A.KeypointParams(format = 'xy', remove_invisible=False) 
-    )
+
 
     # print('train_gt------', train_gt, '--------')
     # print('train_img_dir------', train_img_dir, '--------')
-    train_dataset = FacesPointsDataset(train_img_dir, train_gt, fraction=0.9, mode='train', transform=MyTransform)
+    if fast_train:
+        mode = 'fast_train'
+    else:
+        mode = 'train'
+		
+    train_dataset = FacesPointsDataset(train_img_dir, train_gt, fraction=0.8, mode=mode, transform=MyTransform)
     train_loader = DataLoader(train_dataset, 32, drop_last=True)
     training_module = FacesPointsTrainingModule(not fast_train)
     if not fast_train:
         trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=100)
     else:
-        trainer = pl.Trainer(accelerator='cpu', devices=1, max_epochs=1, logger=False)
+        trainer = pl.Trainer(accelerator='cpu', devices=1, max_epochs=1, logger=False, enable_checkpointing=False)
     
     trainer.fit(training_module, train_loader, val_loader)
     
@@ -351,7 +370,7 @@ def detect(model_filename, test_img_dir):
     
     module = FacesPointsTrainingModule.load_from_checkpoint(model_filename, map_location='cpu')
 
-    dataset = FacesPointsDataset(test_img_dir, None, mode='test', transform=None)
+    dataset = FacesPointsDataset(test_img_dir, None, mode='test', transform=test_transform)
 
     result = {}
 
@@ -360,8 +379,10 @@ def detect(model_filename, test_img_dir):
     for i in range(len(dataset)):
         img, _ = dataset[i]
         pred = module(img[None,:]).detach()[0]
-        dataset.transform_labels(pred, 1/dataset.last_x_scale, 1/dataset.last_y_scale)
-        result[dataset.items[i][0]] = pred
+        pred = dataset.transform_labels(pred, 1/dataset.last_x_scale, 1/dataset.last_y_scale)
+        result[dataset.items[i][0]] = pred.detach().numpy()
+        # if i % 10 == 0:
+        #     print(float(i) / len(dataset))
     
     return result
 

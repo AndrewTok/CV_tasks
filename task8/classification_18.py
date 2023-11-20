@@ -109,6 +109,7 @@ class BirdsClassificationDataModule(pl.LightningDataModule):
         batch_size = 16,
         fraction = 0.8,
         train_transform=None,
+        val_transform =None
     ):
         super().__init__()
 
@@ -118,7 +119,7 @@ class BirdsClassificationDataModule(pl.LightningDataModule):
 
 
         self.train_set = BirdsClassificationDataset(imgs_dir, labels, 'train', fraction, train_transform)
-        self.valid_set = BirdsClassificationDataset(imgs_dir, labels, 'val', fraction, None)
+        self.valid_set = BirdsClassificationDataset(imgs_dir, labels, 'val', fraction, val_transform)
 
 
     # def setup(self, stage):
@@ -132,7 +133,7 @@ class BirdsClassificationDataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         return torch.utils.data.DataLoader(
-            self.train_set,
+            self.valid_set,
             batch_size=self.batch_size,
         )
 
@@ -354,21 +355,27 @@ def train_classifier(gt, img_dir, fast_train = True):
 
     if fast_train:
         mode = 'fast_train'
+        batch_size = 16
     else:
         mode = 'train'
+        batch_size = 120
 
-    data_module = BirdsClassificationDataModule(img_dir, gt, batch_size=120, fraction=0.8, train_transform=default_transform)
+		
+		
+    data_module = BirdsClassificationDataModule(img_dir, gt, batch_size=batch_size, fraction=0.8, train_transform=default_transform, val_transform = test_transform)
 
     training_module = BirdsClassifierTrainingModule(fast_train)
 
     if not fast_train:
         trainer = pl.Trainer(accelerator='cuda', devices=1, max_epochs=32)
         val_loader = data_module.val_dataloader()
+        train_loader = data_module.train_dataloader()
     else:
         trainer = pl.Trainer(accelerator='cpu', devices=1, max_epochs=1, logger=False, enable_checkpointing=False)
         val_loader = None
+        train_loader = data_module.fast_train_dataloader()
     
-    trainer.fit(training_module, data_module.train_dataloader(), val_dataloaders=val_loader)
+    trainer.fit(training_module, train_loader, val_dataloaders=val_loader)
 
     return training_module.model
 
