@@ -7,17 +7,31 @@ import albumentations as A
 import cv2
 import numpy as np
 import torch
+import torch.functional as F
 from albumentations import Compose, DualTransform, PadIfNeeded, RandomCrop
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.models.mobilenetv3 import MobileNet_V3_Large_Weights
-from torchvision.models.segmentation import deeplabv3_mobilenet_v3_large
+from torchvision.models.resnet import ResNet50_Weights
+from torchvision.models.segmentation import deeplabv3_mobilenet_v3_large, deeplabv3_resnet50
 from tqdm import tqdm
 from utils.datasets import CocoLvisDataset
 from utils.misc import draw_points, draw_probmap, save_checkpoint
 from utils.points_sampler import MultiPointSampler
 
+
+
+
+def dice_loss(pred, target, smooth=1.0):
+    pred = pred.contiguous()
+    target = target.contiguous()
+
+    intersection = (pred * target).sum(axis=(2, 3))
+    denominator = pred.square().sum(axis=(2, 3)) + target.square().sum(axis=(2, 3))
+
+    loss = 1 - ((2 * intersection + smooth) / (denominator + smooth))
+    return loss.mean()
 
 class ISModel(nn.Module):
     # Your model should not have required parameters for init
@@ -40,14 +54,22 @@ class ISModel(nn.Module):
             use_disks=True,
         )
 
-        weights = MobileNet_V3_Large_Weights.IMAGENET1K_V1 if pretrained else None
-        self.feature_extractor = deeplabv3_mobilenet_v3_large(
+
+        weights = ResNet50_Weights.IMAGENET1K_V1 if pretrained else None
+        self.feature_extractor = deeplabv3_resnet50(
             num_classes=1,
             weights_backbone=weights,
         )
 
+        # weights = MobileNet_V3_Large_Weights.IMAGENET1K_V1 if pretrained else None
+        # self.feature_extractor = deeplabv3_mobilenet_v3_large(
+        #     num_classes=1,
+        #     weights_backbone=weights,
+        # )
+
         # Add user clicks and mask on input
-        old_conv = self.feature_extractor.backbone["0"][0]
+        # old_conv = self.feature_extractor.backbone["0"][0]
+        old_conv = self.feature_extractor.backbone.conv1
 
         new_conv = nn.Sequential(
             nn.Conv2d(
@@ -68,7 +90,10 @@ class ISModel(nn.Module):
             ),
         )
 
-        self.feature_extractor.backbone["0"][0] = new_conv
+        # self.feature_extractor.backbone["0"][0] = new_conv
+
+
+        self.feature_extractor.backbone.conv1 = new_conv
 
         # Remove Dropout layer
         self.feature_extractor.classifier[0].project[3] = nn.Identity()
@@ -315,6 +340,7 @@ class ISTrainer:
         checkpoint_interval=10,
         max_initial_points=0,
         max_interactive_clicks=0,
+        # scheduler = None,
     ):
         self.cfg = cfg
         self.max_initial_points = max_initial_points
@@ -324,6 +350,9 @@ class ISTrainer:
         self.image_dump_interval = image_dump_interval
         self.trainset = trainset
         self.valset = valset
+        
+
+        self.best_val_loss = 1e16
 
         train_size = trainset.get_samples_number()
         print(f"Dataset of {train_size} samples was loaded for training.")
@@ -351,6 +380,8 @@ class ISTrainer:
         self.device = cfg.device
         self.net = model.to(self.device)
         self.optim = torch.optim.AdamW(self.net.parameters(), lr=3e-4)
+
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optim, 50, verbose=True)
 
     def run(self, num_epochs, validation=True):
         print(f"Total Epochs: {num_epochs}")
@@ -388,6 +419,9 @@ class ISTrainer:
 
             tbar.set_description(f"Epoch {epoch}, training loss {train_loss/(i+1):.4f}")
 
+        if self.scheduler is not None:
+            self.scheduler.step()
+
         save_checkpoint(self.net, self.cfg.CHECKPOINTS_PATH, epoch=None)
 
         if epoch % self.checkpoint_interval == 0:
@@ -409,6 +443,9 @@ class ISTrainer:
             tbar.set_description(
                 f"Epoch {epoch}, validation loss: {val_loss/(i + 1):.4f}"
             )
+        if val_loss < self.best_val_loss:
+            self.best_val_loss = val_loss
+            save_checkpoint(self.net, self.cfg.EXP_PATH/'Best_model')
 
     def batch_forward(self, batch_data, validation=False):
         with torch.set_grad_enabled(not validation):
@@ -449,7 +486,9 @@ class ISTrainer:
             output = self.net(net_input, points)
 
             loss = self.instance_loss(output["instances"], batch_data["instances"])
-            loss = torch.mean(loss)
+            dice = dice_loss(output["instances"], batch_data["instances"])
+            bce_weight = 0.7
+            loss = torch.mean(bce_weight*loss + (1-bce_weight)*dice)    
 
         return loss, batch_data, output
 
@@ -582,16 +621,20 @@ def train_segmentation():
     cfg.device = torch.device("cuda")
 
     cfg.max_initial_points = 24
-    cfg.batch_size = 48
+    cfg.batch_size = 4
     cfg.val_batch_size = cfg.batch_size
 
-    instance_loss = torch.nn.BCEWithLogitsLoss()
+    instance_loss = torch.nn.BCEWithLogitsLoss()  #dice_loss # # jaccard_loss #
 
     # You can add more augmentations here
     h, w = input_size
     train_augmentator = Compose(
         [
             UniformRandomResize(scale_range=(0.75, 1.40)),
+            # A.HorizontalFlip(p = 0.3),
+            # A.VerticalFlip(p = 0.2),
+            # A.RandomCrop()
+            # A.Rotate(limit = 15, p = 0.3),
             PadIfNeeded(min_height=h, min_width=w, border_mode=0),
             RandomCrop(*input_size),
         ],
@@ -644,7 +687,7 @@ def train_segmentation():
         max_interactive_clicks=3,
     )
 
-    trainer.run(num_epochs=10)
+    trainer.run(num_epochs=35)
 
 
 if __name__ == "__main__":
